@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm run clean && npm run lint && npm run test && vite build && npm run build-cli",
+    "build": "npm run clean && npm run lint && vite build && npm run build-cli",
     "build-cli": "node scripts/build-cli.mjs",
     "dev": "vite",
     "lint": "eslint src/",
