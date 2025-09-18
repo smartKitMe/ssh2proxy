@@ -1,0 +1,59 @@
+{
+  "name": "ssh2proxy",
+  "version": "1.0.0",
+  "description": "高性能SSH隧道代理服务器，支持HTTP、HTTPS、SOCKS5代理",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "ssh2proxy": "dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run clean && npm run lint && npm run test && vite build && npm run build-cli",
+    "build-cli": "node scripts/build-cli.mjs",
+    "dev": "vite",
+    "lint": "eslint src/",
+    "test": "mocha src/tests/",
+    "clean": "rimraf dist/",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "proxy",
+    "ssh",
+    "socks5",
+    "http",
+    "https",
+    "tunnel"
+  ],
+  "author": "smartKitMe",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smartKitMe/ssh2proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/smartKitMe/ssh2proxy/issues"
+  },
+  "homepage": "https://github.com/smartKitMe/ssh2proxy#readme",
+  "devDependencies": {
+    "vite": "^4.0.0",
+    "rimraf": "^6.0.1",
+    "eslint": "^9.35.0",
+    "mocha": "^10.8.2",
+    "chai": "^5.1.2"
+  },
+  "dependencies": {
+    "ssh2": "^1.11.0",
+    "socks": "^2.7.1",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^6.1.5",
+    "winston": "^3.8.2",
+    "dotenv": "^16.0.3",
+    "commander": "^10.0.0"
+  }
+}

@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Configuration files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Runtime data
+*.pid
+*.pid.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Vite related
+.vite/
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+
+# SSH keys (common names)
+id_rsa
+id_rsa.pub
+id_dsa
+id_dsa.pub
+id_ecdsa
+id_ecdsa.pub
+id_ed25519
+id_ed25519.pub
+
+# Editor directories
+.qoder/

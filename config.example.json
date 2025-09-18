@@ -1,0 +1,26 @@
+{
+  "ssh": {
+    "host": "your-ssh-server.com",
+    "port": 22,
+    "username": "your-username",
+    "password": "your-password"
+  },
+  "proxy": {
+    "httpPort": 8080,
+    "httpsPort": 8443,
+    "socksPort": 1080,
+    "pacPort": 8090
+  },
+  "pac": {
+    "enabled": true,
+    "defaultProxy": "SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT"
+  },
+  "auth": {
+    "enabled": false,
+    "username": "",
+    "password": ""
+  },
+  "admin": {
+    "enabled": true
+  }
+}
