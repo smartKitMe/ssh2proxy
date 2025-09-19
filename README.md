@@ -38,6 +38,9 @@ npx ssh2proxy --http-port 8080 --https-port 8443 --socks-port 1080
 
 # 使用私钥文件进行SSH认证
 npx ssh2proxy --ssh-private-key-path ~/.ssh/id_rsa
+
+# 指定PAC文件路径
+npx ssh2proxy --pac-file-path ./proxy.pac.js
 ```
 
 ### 作为模块使用
@@ -73,6 +76,7 @@ const config = {
   // PAC配置
   pac: {
     enabled: true,
+    filePath: './proxy.pac.js', // PAC文件路径
     defaultProxy: 'SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT'
   },
   // 认证配置（可选）
@@ -159,6 +163,62 @@ process.on('SIGINT', async () => {
     "username": "",
     "password": ""
   }
+}
+```
+
+## PAC文件服务
+
+SSH2Proxy支持PAC（Proxy Auto-Configuration）文件服务，可以自动配置浏览器或其他客户端的代理设置。
+
+### 启用PAC服务
+
+要启用PAC服务，需要在配置中设置：
+
+```json
+{
+  "pac": {
+    "enabled": true,
+    "filePath": "./proxy.pac.js",
+    "defaultProxy": "SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT"
+  },
+  "proxy": {
+    "pacPort": 8090
+  }
+}
+```
+
+或者使用命令行参数：
+```bash
+npx ssh2proxy --pac-file-path ./proxy.pac.js --pac-port 8090
+```
+
+### PAC文件访问路径
+
+启用PAC服务后，可以通过以下URL访问PAC文件：
+
+- `http://[server-ip]:[pacPort]/proxy.pac` - 默认PAC文件路径
+- `http://[server-ip]:[pacPort]/pac/[filename]` - 指定名称的PAC文件
+
+例如，如果PAC端口设置为8090，则可以通过以下URL访问：
+- `http://localhost:8090/proxy.pac`
+- `http://192.168.1.100:8090/proxy.pac`
+
+### PAC文件示例
+
+```javascript
+function FindProxyForURL(url, host) {
+    // 本地地址直连
+    if (isPlainHostName(host) || 
+        shExpMatch(host, "*.local") || 
+        isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0") || 
+        isInNet(dnsResolve(host), "172.16.0.0", "255.240.0.0") || 
+        isInNet(dnsResolve(host), "192.168.0.0", "255.255.0.0") || 
+        isInNet(dnsResolve(host), "127.0.0.0", "255.255.255.0")) {
+        return "DIRECT";
+    }
+    
+    // 默认使用SOCKS5代理
+    return "SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT";
 }
 ```
 

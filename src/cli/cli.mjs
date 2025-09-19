@@ -69,6 +69,7 @@ async function main() {
     .option('--https-port <port>', 'HTTPS代理端口')
     .option('--socks-port <port>', 'SOCKS5代理端口')
     .option('--pac-port <port>', 'PAC服务端口')
+    .option('--pac-file-path <path>', 'PAC文件路径')
     .option('--ssh-private-key-path <path>', 'SSH私钥文件路径')
     .option('-v, --verbose', '详细日志输出')
     .action(async (options) => {
@@ -108,6 +109,11 @@ async function main() {
         config.proxy.pacPort = parseInt(options.pacPort);
       }
       
+      // 添加PAC文件路径支持
+      if (options.pacFilePath) {
+        config.pac.filePath = options.pacFilePath;
+      }
+      
       // 为了更清晰地显示配置，我们只显示关键部分
       const displayConfig = {
         ...config,
@@ -121,16 +127,16 @@ async function main() {
       console.log('Configuration:', JSON.stringify(displayConfig, null, 2));
       
       // 启动代理服务器
-      // const { ProxyServer } = await import('../app.mjs');
-      // const server = new ProxyServer(config);
+      const { default: ProxyServer } = await import('../app.mjs');
+      const server = new ProxyServer(config);
       
-      // try {
-      //   await server.start();
-      //   console.log('Proxy server started successfully');
-      // } catch (err) {
-      //   console.error('Failed to start proxy server:', err.message);
-      //   process.exit(1);
-      // }
+      try {
+        await server.start();
+        console.log('Proxy server started successfully');
+      } catch (err) {
+        console.error('Failed to start proxy server:', err.message);
+        process.exit(1);
+      }
     });
   
   await program.parseAsync(process.argv);

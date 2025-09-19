@@ -52,3 +52,5 @@ id_ed25519.pub
 
 # Editor directories
 .qoder/
+
+.npmrc
