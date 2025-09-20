@@ -12,6 +12,7 @@
 - 支持上游SOCKS5代理（带认证）作为替代ssh隧道
 - 网络连接池优化，降低网络开销引起的延迟
 - 多线程支持，提升代理服务器性能和速度
+- 负载均衡连接池，允许多个连接共享SSH隧道，提高资源利用率
 
 ## 安装
 
@@ -60,16 +61,17 @@ const config = {
   // 连接池配置
   connectionPool: {
     maxSize: 10,
-    minSize: 2,
+    minSize: 3,
     acquireTimeout: 30000,
     idleTimeout: 60000,
     retryAttempts: 3,
-    retryDelay: 5000
+    retryDelay: 5000,
+    maxConnectionsPerTunnel: 10,
+    loadBalancingStrategy: "least-connections"
   },
   // 代理服务配置
   proxy: {
     httpPort: 8080,
-    httpsPort: 8443,
     socksPort: 1080,
     pacPort: 8090
   },
@@ -135,15 +137,16 @@ process.on('SIGINT', async () => {
   },
   "connectionPool": {
     "maxSize": 10,
-    "minSize": 2,
+    "minSize": 3,
     "acquireTimeout": 30000,
     "idleTimeout": 60000,
     "retryAttempts": 3,
-    "retryDelay": 5000
+    "retryDelay": 5000,
+    "maxConnectionsPerTunnel": 10,
+    "loadBalancingStrategy": "least-connections"
   },
   "proxy": {
     "httpPort": 8080,
-    "httpsPort": 8443,
     "socksPort": 1080,
     "pacPort": 8090
   },
@@ -165,6 +168,28 @@ process.on('SIGINT', async () => {
   }
 }
 ```
+
+## 负载均衡连接池
+
+SSH2Proxy现在支持负载均衡连接池，允许多个连接共享同一个SSH隧道，从而提高资源利用率和系统性能。
+
+### 配置项说明
+
+- `maxConnectionsPerTunnel`: 每个SSH隧道最大连接数，默认为10
+- `loadBalancingStrategy`: 负载均衡策略，默认为"least-connections"（使用率最低优先）
+
+### 工作原理
+
+1. 每个SSH隧道可以被多个连接共享，而不是每个连接都创建一个新的SSH隧道
+2. 当请求隧道分配时，系统会选择使用率最低的隧道
+3. 如果所有隧道都达到连接阈值且未达最大隧道数，则创建新隧道
+4. 如果达到最大隧道数，则强制分配使用率最低的隧道（即使已超过连接阈值）
+
+### 性能优势
+
+- 显著减少SSH隧道数量，降低系统资源消耗
+- 提高连接分配速度，减少网络请求延迟
+- 更好的资源利用率，特别是在高并发场景下
 
 ## PAC文件服务
 

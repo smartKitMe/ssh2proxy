@@ -1,6 +1,6 @@
 {
   "name": "ssh2proxy",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "高性能SSH隧道代理服务器，支持HTTP、HTTPS、SOCKS5代理",
   "main": "dist/index.js",
   "type": "module",

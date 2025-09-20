@@ -37,7 +37,6 @@ describe('SSH2Proxy', () => {
     
     it('should have valid proxy ports', () => {
       expect(defaultConfig.proxy.httpPort).to.be.a('number');
-      expect(defaultConfig.proxy.httpsPort).to.be.a('number');
       expect(defaultConfig.proxy.socksPort).to.be.a('number');
     });
     
@@ -56,7 +55,6 @@ describe('SSH2Proxy', () => {
       
       // 应该保留默认值
       expect(merged.ssh.username).to.equal(defaultConfig.ssh.username);
-      expect(merged.proxy.httpsPort).to.equal(defaultConfig.proxy.httpsPort);
       
       // 应该使用用户配置的值
       expect(merged.ssh.host).to.equal('test-server.com');

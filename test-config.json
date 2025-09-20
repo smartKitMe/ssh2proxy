@@ -1,0 +1,19 @@
+{
+  "ssh": {
+    "host": "localhost",
+    "port": 22,
+    "username": "testuser",
+    "password": "testpass"
+  },
+  "proxy": {
+    "httpPort": 8080,
+    "socksPort": 1080,
+    "pacPort": 8013
+  },
+  "connectionPool": {
+    "maxSize": 5,
+    "minSize": 1,
+    "acquireTimeout": 30000,
+    "idleTimeout": 60000
+  }
+}

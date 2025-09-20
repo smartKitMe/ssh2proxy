@@ -1,0 +1,14 @@
+{
+  "testingMode": true,
+  "proxy": {
+    "httpPort": 8083,
+    "socksPort": 1083,
+    "pacPort": 8016
+  },
+  "connectionPool": {
+    "maxSize": 3,
+    "minSize": 1,
+    "acquireTimeout": 30000,
+    "idleTimeout": 60000
+  }
+}

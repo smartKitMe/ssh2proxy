@@ -24,19 +24,20 @@ export default {
   // 连接池配置
   connectionPool: {
     maxSize: 10,     // 连接池最大连接数
-    minSize: 2,     // 连接池最小连接数
+    minSize: 3,     // 连接池最小连接数
     acquireTimeout: 30000,  // 获取连接超时时间（毫秒）
     idleTimeout: 60000,     // 空闲连接超时时间（毫秒）
     retryAttempts: 3,   // 重试次数
-    retryDelay: 5000       // 重试延迟（毫秒）
+    retryDelay: 5000,       // 重试延迟（毫秒）
+    maxConnectionsPerTunnel: 10, // 每个SSH隧道最大连接数
+    loadBalancingStrategy: "least-connections" // 负载均衡策略
   },
   
   // 代理服务配置
   proxy: {
     httpPort: 8080,
-    httpsPort: 8443,
     socksPort: 1080,
-    pacPort: 8090 // 仅在pac.enabled为true时生效
+    pacPort: 8013 // 仅在pac.enabled为true时生效
   },
   
   // PAC配置

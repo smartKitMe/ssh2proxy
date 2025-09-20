@@ -66,7 +66,6 @@ async function main() {
     .option('-c, --config <path>', '配置文件路径')
     .option('-p, --port <port>', '代理端口')
     .option('--http-port <port>', 'HTTP代理端口')
-    .option('--https-port <port>', 'HTTPS代理端口')
     .option('--socks-port <port>', 'SOCKS5代理端口')
     .option('--pac-port <port>', 'PAC服务端口')
     .option('--pac-file-path <path>', 'PAC文件路径')
@@ -90,15 +89,10 @@ async function main() {
       // 命令行参数覆盖配置文件
       if (options.port) {
         config.proxy.httpPort = parseInt(options.port);
-        config.proxy.httpsPort = parseInt(options.port);
       }
       
       if (options.httpPort) {
         config.proxy.httpPort = parseInt(options.httpPort);
-      }
-      
-      if (options.httpsPort) {
-        config.proxy.httpsPort = parseInt(options.httpsPort);
       }
       
       if (options.socksPort) {

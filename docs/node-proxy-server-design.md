@@ -153,7 +153,6 @@ function FindProxyForURL(url, host) {
   // 代理服务配置
   proxy: {
     httpPort: number,
-    httpsPort: number,
     socksPort: number,
     pacPort: number // 仅在pac.enabled为true时生效
   },
@@ -548,7 +547,6 @@ const proxyWithSSH = new ProxyServer({
   },
   proxy: {
     httpPort: 8080,
-    httpsPort: 8443,
     socksPort: 1080
   },
   connectionPool: {
@@ -571,7 +569,6 @@ const proxyWithAllServices = new ProxyServer({
   },
   proxy: {
     httpPort: 8080,
-    httpsPort: 8443,
     socksPort: 1080,
     pacPort: 8090
   },
@@ -596,7 +593,6 @@ const proxyWithUpstreamSocks5 = new ProxyServer({
   },
   proxy: {
     httpPort: 8080,
-    httpsPort: 8443,
     socksPort: 1080
   }
 });

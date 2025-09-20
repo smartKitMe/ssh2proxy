@@ -5,9 +5,18 @@
     "username": "your-username",
     "password": "your-password"
   },
+  "connectionPool": {
+    "maxSize": 20,
+    "minSize": 5,
+    "acquireTimeout": 30000,
+    "idleTimeout": 60000,
+    "retryAttempts": 3,
+    "retryDelay": 5000,
+    "maxConnectionsPerTunnel": 10,
+    "loadBalancingStrategy": "least-connections"
+  },
   "proxy": {
     "httpPort": 8080,
-    "httpsPort": 8443,
     "socksPort": 1080,
     "pacPort": 8090
   },

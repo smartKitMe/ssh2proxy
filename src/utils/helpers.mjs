@@ -59,10 +59,6 @@ function validateConfig(config) {
     errors.push('Invalid HTTP port');
   }
   
-  if (config.proxy.httpsPort <= 0 || config.proxy.httpsPort > 65535) {
-    errors.push('Invalid HTTPS port');
-  }
-  
   if (config.proxy.socksPort <= 0 || config.proxy.socksPort > 65535) {
     errors.push('Invalid SOCKS port');
   }

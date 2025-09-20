@@ -49,6 +49,8 @@ class Socks5Proxy {
     } catch (err) {
       console.error('SOCKS5 handshake error:', err);
       socket.end();
+      // 抛出异常让调用者处理连接释放
+      throw err;
     }
   }
 
@@ -128,15 +130,26 @@ class Socks5Proxy {
       socket.pipe(stream, { end: true });
       stream.pipe(socket, { end: true });
 
-      socket.on('error', (err) => {
-        console.error('SOCKS5 socket error:', err);
-        stream.end();
-      });
+      // 添加连接关闭事件处理，确保资源释放
+      let socketClosed = false;
+      let streamClosed = false;
 
-      stream.on('error', (err) => {
-        console.error('SOCKS5 stream error:', err);
-        socket.end();
-      });
+      const closeHandler = () => {
+        if (!socketClosed) {
+          socketClosed = true;
+          socket.end();
+        }
+        if (!streamClosed) {
+          streamClosed = true;
+          stream.end();
+        }
+      };
+
+      socket.on('close', closeHandler);
+      stream.on('close', closeHandler);
+      socket.on('error', closeHandler);
+      stream.on('error', closeHandler);
+
     } catch (err) {
       console.error('SOCKS5 connect error:', err);
       // 发送失败响应
