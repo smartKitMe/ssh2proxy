@@ -99,11 +99,11 @@ class LoadBalancedConnectionPool {
           let tunnelObject = null;
 
           switch (this.loadBalancingStrategy) {
-            case 'least-connections':
-              tunnelObject = await this.acquireWithLeastConnectionsStrategy();
-              break;
-            default:
-              tunnelObject = await this.acquireWithLeastConnectionsStrategy();
+          case 'least-connections':
+            tunnelObject = await this.acquireWithLeastConnectionsStrategy();
+            break;
+          default:
+            tunnelObject = await this.acquireWithLeastConnectionsStrategy();
           }
 
           if (!tunnelObject) {
@@ -116,8 +116,8 @@ class LoadBalancedConnectionPool {
               const newTunnelObject = await this.createTunnel();
               this.pool.push(newTunnelObject);
               console.log(`Created new tunnel, total pool size: ${this.pool.length}, tunnelObject count: ${tunnelObject.connectionCount}`);
-              clearImmediate(this.createTunnelTime)
-            })
+              clearImmediate(this.createTunnelTime);
+            });
           }
           clearTimeout(timeout);
 
@@ -175,7 +175,7 @@ class LoadBalancedConnectionPool {
       if (!tunnel.isConnected) {
         this.usedTunnels.splice(usedIndex, 1);
         tunnel.close();
-        return
+        return;
       }
     } else {
       // 在可用池中查找
@@ -185,7 +185,7 @@ class LoadBalancedConnectionPool {
         if (!tunnel.isConnected) {
           this.pool.splice(poolIndex, 1);
           tunnel.close();
-          return
+          return;
         }
       }
     }

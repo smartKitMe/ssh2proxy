@@ -1,3 +1,6 @@
+// eslint.config.js
+import globals from 'globals';
+
 export default [
   {
     files: ['**/*.mjs'],
@@ -17,7 +20,8 @@ export default [
         import: 'readonly',
         exports: 'readonly',
         module: 'readonly',
-        require: 'readonly'
+        require: 'readonly',
+        ...globals.node,          // 包含 setImmediate、clearImmediate、__dirname 
       }
     },
     rules: {

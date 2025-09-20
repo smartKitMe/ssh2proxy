@@ -30,7 +30,7 @@ export default {
     retryAttempts: 3,   // 重试次数
     retryDelay: 5000,       // 重试延迟（毫秒）
     maxConnectionsPerTunnel: 10, // 每个SSH隧道最大连接数
-    loadBalancingStrategy: "least-connections" // 负载均衡策略
+    loadBalancingStrategy: 'least-connections' // 负载均衡策略
   },
   
   // 代理服务配置

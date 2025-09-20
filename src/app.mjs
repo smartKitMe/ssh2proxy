@@ -1,15 +1,12 @@
-import http from 'http';
-import https from 'https';
-import net from 'net';
-import express from 'express';
 import cors from 'cors';
+import express from 'express';
 import helmet from 'helmet';
-import SSHTunnel from './core/ssh-tunnel.mjs';
-import HttpProxy from './core/http-proxy.mjs';
-import Socks5Proxy from './core/socks-proxy.mjs';
-import PacService from './core/pac-service.mjs';
-import LoadBalancedConnectionPool from './core/load-balanced-connection-pool.mjs';
+import http from 'http';
+import net from 'net';
 import ConnectionInitializer from './core/connection-initializer.mjs';
+import LoadBalancedConnectionPool from './core/load-balanced-connection-pool.mjs';
+import PacService from './core/pac-service.mjs';
+import Socks5Proxy from './core/socks-proxy.mjs';
 import AuthMiddleware from './middleware/auth.mjs';
 import LoggerMiddleware from './middleware/logger.mjs';
 import RateLimitMiddleware from './middleware/rate-limit.mjs';
@@ -95,7 +92,7 @@ class ProxyServer {
       // 添加连接池状态日志（仅在非测试模式下）
       if (this.connectionPool) {
         const poolStatus = this.connectionPool.getStatus();
-        console.log(`Acquiring connection from pool for HTTPS CONNECT:`);
+        console.log('Acquiring connection from pool for HTTPS CONNECT:');
         console.log(`  Available tunnels: ${JSON.stringify(poolStatus)}`);
       } else {
         console.log('Using direct connection in testing mode');
@@ -125,10 +122,6 @@ class ProxyServer {
         clientSocket.pipe(stream);
         stream.pipe(clientSocket);
 
-        // 双向管道传输数据
-        // res.socket.pipe(stream, { end: true });
-        // stream.pipe(res.socket, { end: true });
-
         // 确保在所有情况下都能释放连接
         const releaseTunnel = () => {
           if (tunnel) {
@@ -149,13 +142,12 @@ class ProxyServer {
           this.connectionPool.release(tunnel);
         }
         console.error('HTTPS proxy error:', err);
-        if (!res.headersSent) {
+        if (!clientSocket.headersSent) {
           clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-          // res.writeHead(502, { 'Content-Type': 'text/plain' });
         }
         clientSocket.end();
       }
-    })
+    });
 
     this.httpServer.on('request', async (req, res) => {
       // 正常模式：通过SSH隧道
@@ -167,7 +159,7 @@ class ProxyServer {
       // 添加连接池状态日志（仅在非测试模式下）
       if (this.connectionPool) {
         const poolStatus = this.connectionPool.getStatus();
-        console.log(`Acquiring connection from pool:`);
+        console.log('Acquiring connection from pool:');
         console.log(`  Available tunnels: ${JSON.stringify(poolStatus)}`);
       } else {
         console.log('Using direct connection in testing mode');
@@ -199,8 +191,8 @@ class ProxyServer {
 
         stream.write(requestLine + headers);
 
-        req.pipe(stream, { end: false })
-        req.on('end', () => {})
+        req.pipe(stream, { end: false });
+        req.on('end', () => {});
 
         // 双向管道传输数据
         stream.pipe(res);
@@ -242,7 +234,7 @@ class ProxyServer {
         // 添加连接池状态日志（仅在非测试模式下）
         if (this.connectionPool) {
           const poolStatus = this.connectionPool.getStatus();
-          console.log(`Acquiring connection from pool for SOCKS:`);
+          console.log('Acquiring connection from pool for SOCKS:');
           console.log(`  Available tunnels: ${JSON.stringify(poolStatus)}`);
         } else {
           console.log('Using direct connection in testing mode');
