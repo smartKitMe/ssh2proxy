@@ -1,5 +1,10 @@
 // 默认配置文件
 export default {
+  // 隧道类型配置
+  tunnel: {
+    type: 'ssh' // 或 'socks5'
+  },
+  
   // SSH连接配置
   ssh: {
     host: 'localhost',

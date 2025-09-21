@@ -1,4 +1,5 @@
 import SSHTunnel from './ssh-tunnel.mjs';
+import Socks5Tunnel from './socks-tunnel.mjs';
 
 /**
  * 负载均衡连接池类
@@ -19,6 +20,8 @@ class LoadBalancedConnectionPool {
     this.idleTimeout = config.connectionPool.idleTimeout;
     this.maxConnectionsPerTunnel = config.connectionPool.maxConnectionsPerTunnel || 10;
     this.loadBalancingStrategy = config.connectionPool.loadBalancingStrategy || 'least-connections';
+    // 确定隧道类型，默认为ssh
+    this.tunnelType = config.tunnel?.type || 'ssh';
 
     // 维护隧道使用率排序列表，避免每次遍历所有隧道
     this.sortedTunnelList = [];
@@ -28,7 +31,7 @@ class LoadBalancedConnectionPool {
    * 初始化连接池，创建最小数量的隧道连接
    */
   async initialize() {
-    console.log('Initializing load balanced connection pool...');
+    console.log(`Initializing load balanced connection pool with ${this.tunnelType} tunnels...`);
     // 预初始化连接
     for (let i = 0; i < this.minSize; i++) {
       try {
@@ -44,12 +47,36 @@ class LoadBalancedConnectionPool {
   }
 
   /**
-   * 创建新的SSH隧道
+   * 创建新的隧道（根据配置选择SSH或SOCKS5）
    * @returns {Promise<Object>} 隧道对象
    */
   async createTunnel() {
-    const tunnel = new SSHTunnel(this.config.ssh);
+    let tunnel;
+    console.log(`Creating tunnel of type: ${this.tunnelType}`);
+    if (this.tunnelType === 'socks5') {
+      // 使用SOCKS5隧道配置
+      console.log('Using SOCKS5 configuration:', {
+        host: this.config.upstreamSocks5.host,
+        port: this.config.upstreamSocks5.port,
+        username: this.config.upstreamSocks5.username ? '***' : 'none'
+      });
+      tunnel = new Socks5Tunnel({
+        host: this.config.upstreamSocks5.host,
+        port: this.config.upstreamSocks5.port,
+        username: this.config.upstreamSocks5.username,
+        password: this.config.upstreamSocks5.password,
+        retryAttempts: this.config.connectionPool.retryAttempts,
+        retryDelay: this.config.connectionPool.retryDelay
+      });
+    } else {
+      // 默认使用SSH隧道
+      console.log('Using SSH configuration');
+      tunnel = new SSHTunnel(this.config.ssh);
+    }
+    
+    console.log('Connecting to tunnel...');
     await tunnel.connect();
+    console.log('Tunnel connected successfully');
 
     const tunnelObject = {
       tunnel,

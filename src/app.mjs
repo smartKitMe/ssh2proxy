@@ -14,7 +14,7 @@ import RateLimitMiddleware from './middleware/rate-limit.mjs';
 class ProxyServer {
   constructor(config) {
     this.config = config;
-    // 仅在需要SSH连接时才初始化连接池
+    // 仅在需要隧道连接时才初始化连接池
     if (!config.testingMode) {
       this.connectionPool = new LoadBalancedConnectionPool(config);
       this.connectionInitializer = new ConnectionInitializer(this.connectionPool, config);
@@ -133,16 +133,20 @@ class ProxyServer {
   async handleHttpsConnect(req, clientSocket, head) {
     const [remoteHost, remotePort] = req.url.split(':');
     const port = parseInt(remotePort) || 443;
+    
+    console.log(`Handling HTTPS CONNECT request for ${remoteHost}:${port}`);
 
     // 记录连接池状态
     this.logPoolStatus('HTTPS CONNECT');
 
     // 获取SSH隧道连接
     const tunnel = await this.acquireTunnel();
+    console.log('Acquired tunnel for HTTPS CONNECT');
 
     try {
       // 建立SSH隧道流
       const stream = await tunnel.forwardOut('127.0.0.1', 0, remoteHost, port);
+      console.log('Successfully created forward stream');
 
       // 发送连接成功响应
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -158,6 +162,7 @@ class ProxyServer {
 
       // 确保在所有情况下都能释放连接
       const releaseTunnel = () => {
+        console.log('Releasing tunnel');
         if (tunnel) {
           this.connectionPool.release(tunnel);
         }
@@ -172,6 +177,7 @@ class ProxyServer {
       stream.on('error', releaseTunnel);
     } catch (err) {
       // 确保在出现错误时释放连接
+      console.error('Error in HTTPS CONNECT handler:', err);
       if (tunnel) {
         this.connectionPool.release(tunnel);
       }

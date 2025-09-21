@@ -118,6 +118,9 @@ process.on('SIGINT', async () => {
 
 ```json
 {
+  "tunnel": {
+    "type": "ssh" // 或 "socks5"
+  },
   "ssh": {
     "host": "localhost",
     "port": 22,
@@ -190,6 +193,44 @@ SSH2Proxy现在支持负载均衡连接池，允许多个连接共享同一个SS
 - 显著减少SSH隧道数量，降低系统资源消耗
 - 提高连接分配速度，减少网络请求延迟
 - 更好的资源利用率，特别是在高并发场景下
+
+## SOCKS5隧道支持
+
+SSH2Proxy支持使用上游SOCKS5代理作为替代SSH隧道的传输方式。这对于某些网络环境或需要多层代理的场景非常有用。
+
+### 配置SOCKS5隧道
+
+要使用SOCKS5隧道而不是SSH隧道，需要在配置中设置隧道类型：
+
+```json
+{
+  "tunnel": {
+    "type": "socks5"
+  },
+  "upstreamSocks5": {
+    "host": "socks5-proxy.example.com",
+    "port": 1080,
+    "username": "your-username",
+    "password": "your-password"
+  }
+}
+```
+
+### SOCKS5隧道与SSH隧道的对比
+
+| 特性 | SSH隧道 | SOCKS5隧道 |
+|------|---------|------------|
+| 安全性 | 高（加密传输） | 取决于上游代理 |
+| 性能 | 中等 | 高（较少协议开销） |
+| 配置复杂度 | 高（需要SSH服务器） | 低（只需SOCKS5代理） |
+| 认证支持 | 多种方式 | 用户名/密码 |
+
+### 使用场景
+
+- 当无法直接访问SSH服务器时
+- 当需要使用现有的SOCKS5代理基础设施时
+- 在对性能要求较高的场景中
+- 多层代理架构中
 
 ## PAC文件服务
 

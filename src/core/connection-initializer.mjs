@@ -1,4 +1,5 @@
 import SSHTunnel from './ssh-tunnel.mjs';
+import Socks5Tunnel from './socks-tunnel.mjs';
 
 class ConnectionInitializer {
   constructor(connectionPool, config) {
@@ -34,11 +35,31 @@ class ConnectionInitializer {
         
         for (let i = 0; i < connectionsToCreate; i++) {
           try {
-            const connection = new SSHTunnel(this.config.ssh);
+            let connection;
+            // 根据配置选择隧道类型
+            if (this.config.tunnel?.type === 'socks5') {
+              connection = new Socks5Tunnel({
+                host: this.config.upstreamSocks5.host,
+                port: this.config.upstreamSocks5.port,
+                username: this.config.upstreamSocks5.username,
+                password: this.config.upstreamSocks5.password,
+                retryAttempts: this.config.connectionPool.retryAttempts,
+                retryDelay: this.config.connectionPool.retryDelay
+              });
+            } else {
+              connection = new SSHTunnel(this.config.ssh);
+            }
+            
+            // 添加错误监听器，防止未捕获异常
+            connection.on('error', (err) => {
+              console.warn('Connection error during maintenance:', err.message);
+            });
             await connection.connect();
             this.connectionPool.pool.push({
-              connection,
-              lastUsed: Date.now()
+              tunnel: connection,
+              connectionCount: 0,
+              lastUsed: Date.now(),
+              isActive: true
             });
             console.log('Successfully created new connection for pool');
           } catch (err) {

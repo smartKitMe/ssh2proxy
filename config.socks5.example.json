@@ -1,0 +1,53 @@
+{
+  "tunnel": {
+    "type": "socks5"
+  },
+  "upstreamSocks5": {
+    "host": "socks5-proxy.example.com",
+    "port": 1080,
+    "username": "your-username",
+    "password": "your-password"
+  },
+  "ssh": {
+    "host": "localhost",
+    "port": 22,
+    "username": "user",
+    "password": "",
+    "privateKey": "",
+    "passphrase": "",
+    "keepaliveInterval": 30000,
+    "retryAttempts": 3,
+    "retryDelay": 5000
+  },
+  "connectionPool": {
+    "maxSize": 10,
+    "minSize": 3,
+    "acquireTimeout": 30000,
+    "idleTimeout": 60000,
+    "retryAttempts": 3,
+    "retryDelay": 5000,
+    "maxConnectionsPerTunnel": 10,
+    "loadBalancingStrategy": "least-connections"
+  },
+  "proxy": {
+    "httpPort": 8080,
+    "socksPort": 1080,
+    "pacPort": 8013
+  },
+  "pac": {
+    "enabled": false,
+    "filePath": "",
+    "content": "",
+    "defaultProxy": "SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT"
+  },
+  "auth": {
+    "enabled": false,
+    "username": "",
+    "password": ""
+  },
+  "admin": {
+    "enabled": false,
+    "username": "",
+    "password": ""
+  }
+}
