@@ -72,6 +72,9 @@ class LoadBalancedConnectionPool {
       // 默认使用SSH隧道
       console.log('Using SSH configuration');
       tunnel = new SSHTunnel(this.config.ssh);
+      tunnel.on('error', (err) => {
+        console.error('SSH tunnel error:', err);
+      });
     }
     
     console.log('Connecting to tunnel...');
