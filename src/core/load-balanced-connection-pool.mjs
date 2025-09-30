@@ -221,7 +221,7 @@ class LoadBalancedConnectionPool {
     }
 
     if (!tunnelObject) {
-      console.warn('Tried to release a tunnel that is not managed by this pool:' + JSON.stringify(tunnel));
+      console.warn('Tried to release a tunnel that is not managed by this pool:' + tunnel);
       return;
     }
 
