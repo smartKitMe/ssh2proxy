@@ -23,7 +23,14 @@ export default {
     host: '',
     port: 1080,
     username: '', // 可选，如果上游SOCKS5需要认证
-    password: ''  // 可选，如果上游SOCKS5需要认证
+    password: '', // 可选，如果上游SOCKS5需要认证
+    // SOCKS5连接池配置
+    pool: {
+      maxConnections: 10,        // 每个目标最大连接数
+      idleTimeout: 30000,        // 空闲超时(毫秒)
+      connectionTimeout: 10000,  // 连接超时(毫秒)
+      healthCheckInterval: 60000 // 健康检查间隔(毫秒)
+    }
   },
   
   // 连接池配置
