@@ -1,65 +1,69 @@
 # SSH2Proxy
 
-高性能SSH隧道代理服务器，支持HTTP、HTTPS、SOCKS5代理协议。
+## Language
 
-## 功能特性
+[English](README.md) | [简体中文](README-zh.md)
 
-- 基于SSH隧道的安全代理连接
-- 支持HTTP/HTTPS代理协议
-- 支持SOCKS5代理协议
-- PAC文件服务，支持自动代理配置
-- 高性能并发处理能力
-- 支持上游SOCKS5代理（带认证）作为替代ssh隧道
-- 网络连接池优化，降低网络开销引起的延迟
-- 多线程支持，提升代理服务器性能和速度
-- 负载均衡连接池，允许多个连接共享SSH隧道，提高资源利用率
-- **SOCKS5连接池优化**，显著提升SOCKS5隧道性能
+High-performance SSH tunnel proxy server with HTTP, HTTPS, and SOCKS5 support.
 
-## 安装
+## Features
+
+- Secure proxy connections over SSH tunnels
+- HTTP/HTTPS proxy protocol support
+- SOCKS5 proxy protocol support
+- PAC file service for automatic proxy configuration
+- High-performance concurrent processing
+- Upstream SOCKS5 proxy (with authentication) as an alternative to SSH tunnel
+- Connection pool optimizations to reduce latency caused by network overhead
+- Multi-threading to improve server performance and throughput
+- Load-balanced connection pool allowing multiple connections to share SSH tunnels
+- SOCKS5 connection pool optimization for significantly improved SOCKS5 tunnel performance
+
+## Installation
 
 ```bash
 npm install ssh2proxy
 ```
 
-## 使用方法
+## Usage
 
-### 作为命令行工具使用
+### CLI
 
 ```bash
-# 显示帮助信息
+# Show help
 npx ssh2proxy --help
 
-# 显示版本信息
+# Show version
 npx ssh2proxy --version
 
-# 使用配置文件启动
+# Start with a config file
 npx ssh2proxy --config config.json
 
-# 指定端口启动
+# Specify ports
 npx ssh2proxy --http-port 8080 --https-port 8443 --socks-port 1080
 
-# 使用私钥文件进行SSH认证
+# Use SSH private key for authentication
 npx ssh2proxy --ssh-private-key-path ~/.ssh/id_rsa
 
-# 指定PAC文件路径
+# Specify PAC file path
 npx ssh2proxy --pac-file-path ./proxy.pac.js
 ```
 
-### 作为模块使用
+### As a Module
 
 ```javascript
 import { ProxyServer } from 'ssh2proxy';
 
-// 配置SSH隧道代理
+// Configure SSH tunnel proxy
 const config = {
-  // SSH连接配置
+  // SSH connection configuration
   ssh: {
     host: 'your-ssh-server.com',
     port: 22,
     username: 'your-username',
-    password: 'your-password' // 或使用privateKey
+    password: 'your-password' // or use privateKey
   },
-  // 连接池配置
+  // Connection pool configuration
   connectionPool: {
     maxSize: 10,
     minSize: 3,
@@ -70,31 +74,31 @@ const config = {
     maxConnectionsPerTunnel: 10,
     loadBalancingStrategy: "least-connections"
   },
-  // 代理服务配置
+  // Proxy service configuration
   proxy: {
     httpPort: 8080,
     socksPort: 1080,
     pacPort: 8090
   },
-  // PAC配置
+  // PAC configuration
   pac: {
     enabled: true,
-    filePath: './proxy.pac.js', // PAC文件路径
+    filePath: './proxy.pac.js', // PAC file path
     defaultProxy: 'SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT'
   },
-  // 认证配置（可选）
+  // Authentication configuration (optional)
   auth: {
     enabled: false,
     username: '',
     password: ''
   },
-  // 管理端点配置（可选）
+  // Admin endpoint configuration (optional)
   admin: {
     enabled: true
   }
 };
 
-// 创建并启动代理服务器
+// Create and start the proxy server
 const server = new ProxyServer(config);
 
 server.start()
@@ -105,7 +109,7 @@ server.start()
     console.error('Failed to start SSH2Proxy server:', err);
   });
 
-// 优雅关闭
+// Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down SSH2Proxy server...');
   await server.stop();
@@ -113,14 +117,14 @@ process.on('SIGINT', async () => {
 });
 ```
 
-## 配置说明
+## Configuration
 
-配置文件支持JSON格式，详细配置项如下：
+Configuration files use JSON. Detailed options:
 
 ```json
 {
   "tunnel": {
-    "type": "ssh" // 或 "socks5"
+    "type": "ssh" // or "socks5"
   },
   "ssh": {
     "host": "localhost",
@@ -179,35 +183,35 @@ process.on('SIGINT', async () => {
 }
 ```
 
-## 负载均衡连接池
+## Load-Balanced Connection Pool
 
-SSH2Proxy现在支持负载均衡连接池，允许多个连接共享同一个SSH隧道，从而提高资源利用率和系统性能。
+SSH2Proxy supports a load-balanced connection pool that allows multiple connections to share a single SSH tunnel, improving resource utilization and system performance.
 
-### 配置项说明
+### Configuration Options
 
-- `maxConnectionsPerTunnel`: 每个SSH隧道最大连接数，默认为10
-- `loadBalancingStrategy`: 负载均衡策略，默认为"least-connections"（使用率最低优先）
+- `maxConnectionsPerTunnel`: Maximum connections per SSH tunnel (default: 10)
+- `loadBalancingStrategy`: Load balancing strategy (default: `least-connections`)
 
-### 工作原理
+### How It Works
 
-1. 每个SSH隧道可以被多个连接共享，而不是每个连接都创建一个新的SSH隧道
-2. 当请求隧道分配时，系统会选择使用率最低的隧道
-3. 如果所有隧道都达到连接阈值且未达最大隧道数，则创建新隧道
-4. 如果达到最大隧道数，则强制分配使用率最低的隧道（即使已超过连接阈值）
+1. Each SSH tunnel can be shared by multiple connections, rather than creating a new tunnel per connection
+2. When allocating tunnels, the system selects the one with the lowest utilization
+3. If all tunnels reach the connection threshold and max tunnel count isn’t reached, a new tunnel is created
+4. If the max tunnel count is reached, the least-utilized tunnel is assigned even if it exceeds the threshold
 
-### 性能优势
+### Performance Benefits
 
-- 显著减少SSH隧道数量，降低系统资源消耗
-- 提高连接分配速度，减少网络请求延迟
-- 更好的资源利用率，特别是在高并发场景下
+- Significantly fewer SSH tunnels, reducing system resource usage
+- Faster connection allocation, reducing request latency
+- Better resource utilization, especially under high concurrency
 
-## SOCKS5隧道支持
+## SOCKS5 Tunnel Support
 
-SSH2Proxy支持使用上游SOCKS5代理作为替代SSH隧道的传输方式。这对于某些网络环境或需要多层代理的场景非常有用。
+SSH2Proxy supports using an upstream SOCKS5 proxy as the transport instead of an SSH tunnel, which is useful in specific network environments or multi-layer proxy setups.
 
-### 配置SOCKS5隧道
+### Configure SOCKS5 Tunnel
 
-要使用SOCKS5隧道而不是SSH隧道，需要在配置中设置隧道类型：
+To use a SOCKS5 tunnel, set the tunnel type in your configuration:
 
 ```json
 {
@@ -223,36 +227,36 @@ SSH2Proxy支持使用上游SOCKS5代理作为替代SSH隧道的传输方式。�
 }
 ```
 
-### SOCKS5隧道与SSH隧道的对比
+### SOCKS5 vs SSH Tunnel
 
-| 特性 | SSH隧道 | SOCKS5隧道 |
-|------|---------|------------|
-| 安全性 | 高（加密传输） | 取决于上游代理 |
-| 性能 | 中等 | 高（较少协议开销） |
-| 配置复杂度 | 高（需要SSH服务器） | 低（只需SOCKS5代理） |
-| 认证支持 | 多种方式 | 用户名/密码 |
+| Feature | SSH Tunnel | SOCKS5 Tunnel |
+|--------|------------|---------------|
+| Security | High (encrypted transport) | Depends on upstream proxy |
+| Performance | Medium | High (less protocol overhead) |
+| Configuration Complexity | High (requires SSH server) | Low (requires SOCKS5 proxy) |
+| Authentication Support | Multiple methods | Username/Password |
 
-### 使用场景
+### Use Cases
 
-- 当无法直接访问SSH服务器时
-- 当需要使用现有的SOCKS5代理基础设施时
-- 在对性能要求较高的场景中
-- 多层代理架构中
+- When direct access to an SSH server isn’t possible
+- When leveraging existing SOCKS5 proxy infrastructure
+- High-performance scenarios
+- Multi-layer proxy architectures
 
-## SOCKS5连接池优化
+## SOCKS5 Connection Pool Optimization
 
-SSH2Proxy现在实现了高性能的SOCKS5连接池，通过连接复用机制显著提升了SOCKS5隧道的性能表现。
+SSH2Proxy implements a high-performance SOCKS5 connection pool that significantly improves SOCKS5 tunnel performance through connection reuse.
 
-### 连接池特性
+### Pool Features
 
-- **连接复用**：相同目标主机的请求复用已建立的SOCKS5连接
-- **智能管理**：自动管理连接生命周期，包括健康检查和超时回收
-- **等待队列**：当连接池达到上限时，请求自动进入等待队列
-- **性能监控**：提供详细的连接池状态和性能指标
+- Connection reuse: Requests to the same target host reuse existing SOCKS5 connections
+- Smart lifecycle management: Health checks and idle connection reclamation
+- Wait queue: Requests enter a queue when the pool reaches its limit
+- Performance monitoring: Detailed pool status and metrics
 
-### 配置选项
+### Configuration
 
-在配置文件中添加SOCKS5连接池配置：
+Add the SOCKS5 pool configuration to your settings:
 
 ```json
 {
@@ -265,42 +269,42 @@ SSH2Proxy现在实现了高性能的SOCKS5连接池，通过连接复用机制�
 }
 ```
 
-### 性能提升
+### Performance Improvements
 
-| 指标 | 优化前 | 优化后 | 提升幅度 |
-|------|--------|--------|----------|
-| 连接建立时间 | 每次100-500ms | 首次100-500ms，后续<1ms | 99%+ |
-| 并发处理能力 | 受限于连接建立 | 受限于连接池大小 | 提升5-10倍 |
-| CPU使用率 | 高（频繁握手） | 低（连接复用） | 降低60-80% |
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Connection setup time | 100–500ms each | 100–500ms first, <1ms subsequent | 99%+ |
+| Concurrency | Limited by setup | Limited by pool size | 5–10x |
+| CPU usage | High (frequent handshakes) | Low (connection reuse) | 60–80% lower |
 
-### 工作原理
+### How It Works
 
-1. **连接获取**：请求连接时，首先检查空闲连接池
-2. **连接复用**：如果有可用空闲连接，立即复用
-3. **新建连接**：如果没有可用连接且未达上限，创建新连接
-4. **等待队列**：如果达到连接上限，请求进入等待队列
-5. **自动释放**：连接使用完毕后自动释放回连接池
-6. **健康检查**：定期检查空闲连接的有效性
+1. Acquire: Check idle pool first when requesting a connection
+2. Reuse: Immediately reuse an available idle connection
+3. Create: If none available and under the limit, create a new connection
+4. Queue: If at the limit, requests enter a wait queue
+5. Release: After use, connections are released back to the pool
+6. Health check: Periodically validate idle connections
 
-### 监控指标
+### Metrics
 
-连接池提供以下监控指标：
+The pool exposes the following metrics:
 
-- `totalConnections` - 总连接数
-- `activeConnections` - 活跃连接数
-- `idleConnections` - 空闲连接数
-- `pendingRequests` - 等待请求数
-- `connectionHits` - 连接复用次数
-- `connectionMisses` - 新建连接次数
-- `avgWaitTime` - 平均等待时间
+- `totalConnections` – total connections
+- `activeConnections` – active connections
+- `idleConnections` – idle connections
+- `pendingRequests` – queued requests
+- `connectionHits` – reuse count
+- `connectionMisses` – new connection count
+- `avgWaitTime` – average wait time
 
-## PAC文件服务
+## PAC File Service
 
-SSH2Proxy支持PAC（Proxy Auto-Configuration）文件服务，可以自动配置浏览器或其他客户端的代理设置。
+SSH2Proxy provides a PAC (Proxy Auto-Configuration) file service to automatically configure browsers or other clients.
 
-### 启用PAC服务
+### Enable PAC Service
 
-要启用PAC服务，需要在配置中设置：
+Set the following configuration:
 
 ```json
 {
@@ -315,27 +319,25 @@ SSH2Proxy支持PAC（Proxy Auto-Configuration）文件服务，可以自动配�
 }
 ```
 
-或者使用命令行参数：
+Or via CLI:
 ```bash
 npx ssh2proxy --pac-file-path ./proxy.pac.js --pac-port 8090
 ```
 
-### PAC文件访问路径
+### PAC Access Paths
 
-启用PAC服务后，可以通过以下URL访问PAC文件：
+- `http://[server-ip]:[pacPort]/proxy.pac` – default PAC file
+- `http://[server-ip]:[pacPort]/pac/[filename]` – specified PAC file name
 
-- `http://[server-ip]:[pacPort]/proxy.pac` - 默认PAC文件路径
-- `http://[server-ip]:[pacPort]/pac/[filename]` - 指定名称的PAC文件
-
-例如，如果PAC端口设置为8090，则可以通过以下URL访问：
+For example, with PAC port `8090`:
 - `http://localhost:8090/proxy.pac`
 - `http://192.168.1.100:8090/proxy.pac`
 
-### PAC文件示例
+### PAC Example
 
 ```javascript
 function FindProxyForURL(url, host) {
-    // 本地地址直连
+    // Direct for local addresses
     if (isPlainHostName(host) || 
         shExpMatch(host, "*.local") || 
         isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0") || 
@@ -345,16 +347,16 @@ function FindProxyForURL(url, host) {
         return "DIRECT";
     }
     
-    // 默认使用SOCKS5代理
+    // Default to SOCKS5
     return "SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT";
 }
 ```
 
-## SSH私钥认证
+## SSH Private Key Authentication
 
-SSH2Proxy支持使用私钥进行SSH认证，有两种方式：
+SSH2Proxy supports SSH authentication with private keys in two ways:
 
-1. 在配置文件中直接提供私钥内容：
+1. Provide the private key content directly in the config:
    ```json
    {
      "ssh": {
@@ -363,31 +365,31 @@ SSH2Proxy支持使用私钥进行SSH认证，有两种方式：
    }
    ```
 
-2. 使用命令行参数指定私钥文件路径：
+2. Use a CLI parameter to specify the private key path:
    ```bash
    npx ssh2proxy --ssh-private-key-path ~/.ssh/id_rsa
    ```
 
-## 开发
+## Development
 
-### 安装依赖
+### Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 构建项目
+### Build
 
 ```bash
 npm run build
 ```
 
-### 运行测试
+### Test
 
 ```bash
 npm test
 ```
 
-## 许可证
+## License
 
 MIT
