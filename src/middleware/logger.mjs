@@ -79,4 +79,4 @@ class LoggerMiddleware {
   }
 }
 
-export default c3RenameProbe;
+export default LoggerMiddleware;
