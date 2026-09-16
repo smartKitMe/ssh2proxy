@@ -61,12 +61,22 @@ class ConnectionInitializer {
 
   /**
    * 补建连接至 minSize，并在补建完成后重新取状态打印（C2-17/A15 STATUS_AFTER_FILL）
+   *
+   * H3-S302 修法：补建 MUST 经池的公开 API（`registerTunnel`）而不是直写 `pool.pool`——
+   * 旧实现 `this.connectionPool.pool.push({...})` 绕过关闭态守护，池被 close() 后仍可被注入隧道（池复活），
+   * 且不计 `stats.createdTunnels`。现在关闭态由池侧统一拒绝（返回 null），本方法据此**中止**补建。
    * @returns {Promise<{before: Object, after: Object, created: number}>}
    */
   async maintainConnectionPool() {
     const before = this.connectionPool.getStatus();
     const minSize = this.config.connectionPool?.minSize ?? 0;
     let created = 0;
+
+    // 池已关闭 → 不补建（维护定时器可能在 stop() 之后仍有一次在途调用）
+    if (before.closed === true) {
+      console.log('Connection pool is closed; skipping maintenance refill');
+      return { before, after: before, created: 0 };
+    }
 
     if (before.total < minSize) {
       const connectionsToCreate = minSize - before.total;
@@ -83,12 +93,12 @@ class ConnectionInitializer {
             });
           }
           await connection.connect();
-          this.connectionPool.pool.push({
-            tunnel: connection,
-            connectionCount: 0,
-            lastUsed: Date.now(),
-            isActive: true
-          });
+          // 经池的公开 API 入池：关闭态由池侧拒绝（返回 null）并关闭该隧道
+          const registered = this.connectionPool.registerTunnel(connection);
+          if (!registered) {
+            console.log('Connection pool rejected maintenance refill (pool closed); aborting refill loop');
+            break;
+          }
           created++;
           console.log('Successfully created new connection for pool');
         } catch (err) {
