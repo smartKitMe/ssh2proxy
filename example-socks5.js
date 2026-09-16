@@ -50,7 +50,7 @@ const config = {
   proxy: {
     httpPort: 8081,
     socksPort: 1080,
-    pacPort: 8014
+    pacPort: 8014 // 示例值，默认 8013
   },
   
   // PAC配置
