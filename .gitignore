@@ -28,7 +28,7 @@ Thumbs.db
 .DS_Store
 
 # Package manager
-package-lock.json
+# package-lock.json MUST 入库：依赖版本无锁会让发布不可复现（C1-12 / D-133，RD-02 已批准解除忽略）
 yarn.lock
 pnpm-lock.yaml
 
@@ -54,3 +54,6 @@ id_ed25519.pub
 .qoder/
 
 .npmrc
+
+# dsh-codepunk 工作房（S/M 规模工作房若落在工程根，不得进入 git 索引）
+rooms/

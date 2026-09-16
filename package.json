@@ -2,8 +2,17 @@
   "name": "ssh2proxy",
   "version": "1.1.4",
   "description": "高性能SSH隧道代理服务器，支持HTTP、HTTPS、SOCKS5代理，可选择使用上游SOCKS5代理替代SSH隧道",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
   "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "ssh2proxy": "dist/cli.js"
   },
@@ -17,7 +26,8 @@
     "build-cli": "node scripts/build-cli.mjs",
     "dev": "vite",
     "lint": "eslint src/ --fix",
-    "test": "mocha src/tests/",
+    "start": "node dist/cli.js",
+    "test": "mocha --recursive src/tests/ --exit",
     "clean": "rimraf dist/",
     "prepublishOnly": "npm run build"
   },
@@ -50,7 +60,6 @@
   "dependencies": {
     "commander": "^10.0.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "helmet": "^6.1.5",
     "socks": "^2.7.1",
