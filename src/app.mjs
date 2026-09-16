@@ -33,6 +33,26 @@ function constantTimeEqual(a, b) {
 }
 
 /**
+ * 有效凭据判据（fail-closed）：用户名与口令均须为非空字符串。
+ *
+ * 语义与 `src/middleware/auth.mjs#hasValidCredentials`、`src/core/socks-proxy.mjs#hasValidCredentials` **完全对齐**，
+ * 三处 MUST 保持同义（本次 D-1 缺陷即因 HTTP 侧漏了这条判据）。
+ *
+ * 为什么 MUST 在比较**之前**判定：`constantTimeEqual('', '')` 为 true，若配置里 username/password 为空字符串，
+ * 则客户端用**空凭据**（`Proxy-Authorization: Basic Og==`）即可通过认证 ⇒ 认证面 fail-open。
+ * 配置不合法属于**部署错误**，唯一安全的选择是拒绝一切入站认证，而不是「谁都能进」。
+ *
+ * @param {*} auth - 认证配置对象
+ * @returns {boolean} 凭据是否有效（可据此放行）
+ */
+export function hasValidCredentials(auth) {
+  if (!auth) return false;
+  const username = auth.username == null ? '' : String(auth.username);
+  const password = auth.password == null ? '' : String(auth.password);
+  return username.length > 0 && password.length > 0;
+}
+
+/**
  * 构造转发到上游的请求行与 Host 头（纯函数，便于探针断言各端口/路径形态）
  *
  * 其一：WHATWG `URL` **没有 `.path` 属性**（`urlObject.path` 恒为 `undefined`）——历史实现写作
@@ -783,6 +803,23 @@ class ProxyServer {
     this.adminApp.use('/api/*', (req, res, next) => {
       const authHeader = req.headers.authorization;
 
+      // D-1 防御性固化（兄弟路径排查）：管理凭据为空时同样是「空===空」的 fail-open 形态。
+      // 当前 `getAdminCredentials()` 只会返回「配置值」或「随机生成值」，两条路径都非空，
+      // 故这是**防御性**判据而非在修复现存缺陷；一旦未来生成逻辑退化或配置校验前移，
+      // 它保证管理端点仍然 fail-closed（拒绝一切）而不是「谁都能进」。
+      const adminRejectsAnonymous = !hasValidCredentials(credentials);
+      if (adminRejectsAnonymous) {
+        if (!this.adminConfigWarned) {
+          console.warn('Admin auth warning: admin credentials are empty or invalid — all /api/* requests are denied (fail-closed)');
+          this.adminConfigWarned = true;
+        }
+        res.writeHead(401, {
+          'WWW-Authenticate': 'Basic realm="Admin Service"'
+        });
+        res.end('Unauthorized');
+        return;
+      }
+
       if (!authHeader || !authHeader.startsWith('Basic ')) {
         res.writeHead(401, {
           'WWW-Authenticate': 'Basic realm="Admin Service"'
@@ -899,12 +936,25 @@ class ProxyServer {
       return { authenticated: false, username: null };
     }
 
+    // D-1（H1-S401）：凭据有效性前置判据 —— 必须在比较之前（fail-closed）。
+    // 配置里 username/password 任一为空时，`constantTimeEqual('', '')` 会返回 true，
+    // 使客户端用空凭据（Basic Og==）或仅用户名（Basic dTo=）即被放行并真实转发。
+    // 配置不合法 ⇒ 拒绝一切入站认证，且不回退到「谁都能进」。
+    if (!hasValidCredentials(this.config.auth)) {
+      if (!this.authConfigWarned) {
+        console.warn('Proxy auth warning: auth.enabled=true but auth.username/auth.password is missing or empty — all inbound proxy authentication is denied (fail-closed)');
+        this.authConfigWarned = true;
+      }
+      return { authenticated: false, username: null };
+    }
+
     try {
       const base64Credentials = authHeader.split(' ')[1];
       const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
       const [username, password] = credentials.split(':');
 
-      // F9：常量时间比较；两个比较都执行（不做短路），避免泄漏「用户名是否正确」的时序
+      // F9：常量时间比较；两个比较都执行（不做短路），避免泄漏「用户名是否正确」的时序。
+      // 注意：上面已用 hasValidCredentials 保证配置侧两值非空，故这里的比较结果不会出现「空===空」的假通过。
       const usernameMatches = constantTimeEqual(username, this.config.auth.username);
       const passwordMatches = constantTimeEqual(password, this.config.auth.password);
 
