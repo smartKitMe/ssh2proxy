@@ -22,10 +22,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm run clean && npm run lint && vite build && npm run build-cli",
+    "build": "npm run clean && npm run lint && vite build && npm run build-cli && node scripts/check-externals.mjs --strict",
     "build-cli": "node scripts/build-cli.mjs",
+    "check-externals": "node scripts/check-externals.mjs",
     "dev": "vite",
-    "lint": "eslint src/ --fix",
+    "lint": "eslint src/ scripts/ --fix",
     "start": "node dist/cli.js",
     "test": "mocha --recursive src/tests/",
     "clean": "rimraf dist/",
