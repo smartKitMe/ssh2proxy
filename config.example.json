@@ -1,4 +1,7 @@
 {
+  "tunnel": {
+    "type": "ssh"
+  },
   "ssh": {
     "host": "your-ssh-server.com",
     "port": 22,
@@ -18,7 +21,7 @@
   "proxy": {
     "httpPort": 8080,
     "socksPort": 1080,
-    "pacPort": 8090
+    "pacPort": 8013
   },
   "pac": {
     "enabled": true,

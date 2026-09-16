@@ -3,6 +3,10 @@ import { ProxyServer } from './src/index.mjs';
 
 // 配置SSH隧道代理
 const config = {
+  // 隧道类型（'ssh' 为默认值）
+  tunnel: {
+    type: 'ssh'
+  },
   // SSH连接配置
   ssh: {
     host: '1.2.3.4',
@@ -13,7 +17,7 @@ const config = {
   // 连接池配置
   connectionPool: {
     maxSize: 10,
-    minSize: 2,
+    minSize: 3,
     acquireTimeout: 30000,
     idleTimeout: 60000,
     retryAttempts: 3,
@@ -22,9 +26,10 @@ const config = {
   // 代理服务配置
   proxy: {
     httpPort: 8080,
-    httpsPort: 8443,
+    httpsPort: 8443, // 示例值；默认 0 = 该端口不监听（独立 HTTP CONNECT 端口，不做 TLS 终止）
     socksPort: 1080,
-    pacPort: 8090
+    pacPort: 8013, // 默认 8013
+    adminPort: 8081 // 默认 8081
   },
   // PAC配置
   pac: {
