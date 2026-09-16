@@ -29,9 +29,22 @@ export default {
       maxConnections: 10,        // 每个目标最大连接数
       idleTimeout: 30000,        // 空闲超时(毫秒)
       connectionTimeout: 10000,  // 连接超时(毫秒)
-      healthCheckInterval: 60000 // 健康检查间隔(毫秒)
+      healthCheckInterval: 60000, // 健康检查间隔(毫秒)
+      waitTimeout: 10000,        // 池满后的排队等待超时(毫秒)
+      cleanupInterval: 10000,    // 空闲连接回收扫描间隔(毫秒)
+      minConnections: 1,         // 动态调整下限(每个目标)
+      maxConnectionsLimit: 0,    // 动态调整上限，0 表示 maxConnections * 4
+      prewarm: false,            // 隧道 connect() 时是否预热连接
+      prewarmCount: 1,           // 每个预热目标建立的连接数
+      prewarmTargets: [],        // 预热目标，元素形如 'host:port' 或 {host, port}
+      retryBackoffFactor: 2,     // 建连重试退避倍数（指数退避）
+      retryMaxDelay: 30000,      // 建连重试最大延迟(毫秒)
+      fallbackHost: '',          // 备用上游SOCKS5地址(故障转移)
+      fallbackPort: 0            // 备用上游SOCKS5端口
     }
   },
+  // 顶层兼容别名（README 使用的键）：与 upstreamSocks5.pool 同源，存在时优先生效
+  socks5Pool: {},
   
   // 连接池配置
   connectionPool: {
