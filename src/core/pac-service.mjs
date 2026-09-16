@@ -117,6 +117,25 @@ class PacService {
    * @returns {string} PAC 文件内容
    */
   buildDefaultPacContent() {
+    const proxyList = this.generateDefaultProxyString();
+    return `
+function FindProxyForURL(url, host) {
+  return "${proxyList}";
+}
+`;
+  }
+
+  /**
+   * 代理串（端口单一来源，D-119 / co-002）
+   *
+   * 这是「PAC 用哪个回环端口」的**唯一**实现（此前 worker 侧另有一份硬编码 1080 的副本，
+   * 造成 H3-S304：热路径绕过配置）。调用方（`app.mjs` 的热路径 payload 构造、本类的默认内容生成）
+   * MUST 取用本方法，而不是自行拼串或推断端口。
+   * 归一化：`config.pac.defaultProxy` 模板中的 `{socksPort}`/`{httpPort}`/`{host}` 占位符与
+   * 历史 `127.0.0.1:<任意端口>` 一律替换为真实 `config.proxy.socksPort`。
+   * @returns {string} 形如 `SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT`
+   */
+  generateDefaultProxyString() {
     const host = '127.0.0.1';
     const proxy = (this.config && this.config.proxy) || {};
     const socksPort = proxy.socksPort;
@@ -124,17 +143,52 @@ class PacService {
       ? this.config.pac.defaultProxy
       : `SOCKS5 ${host}:${socksPort}; SOCKS ${host}:${socksPort}; DIRECT`;
 
-    const proxyList = String(template)
+    return String(template)
       .replace(/\{socksPort\}/g, String(socksPort))
       .replace(/\{httpPort\}/g, String(proxy.httpPort))
       .replace(/\{host\}/g, host)
       .replace(/127\.0\.0\.1:\d+/g, `${host}:${socksPort}`);
+  }
 
-    return `
-function FindProxyForURL(url, host) {
-  return "${proxyList}";
-}
-`;
+  /**
+   * 与 `handleRequest` 完全同源的 PAC 解析（供 worker 热路径复用，H3-S304）
+   *
+   * 语义与 `generatePacContent()` **逐契约一致（含尺寸维度，R-B）**：
+   *  - 命中具体文件/显式内容 → `{ kind: 'content', content }`（原样返回，**不按尺寸裁剪**）；
+   *  - 默认面且无文件/内容 → `{ kind: 'template', proxy }`（`proxy` 由 `generateDefaultProxyString()` 归一化）；
+   *  - 按名未命中 → `null`（调用方据此 404，MUST NOT 用默认内容冒充）。
+   *
+   * R-B 修正（审查门实测 307265B 文件两路输出不同：worker 525B 默认模板 vs 回落 307265B 正文）：
+   * 早期实现对本方法加了 256KiB 上限、超限回落默认模板，而主线程 `generatePacContent()` 仍整文件返回
+   * ⇒ 同一请求因**文件大小**而两路语义分叉，直接推翻「两路同源」的声称。
+   * 现改为**两路一律原样返回文件内容**：尺寸不改变语义（PAC 文本是可结构化克隆的字符串；
+   * 单文件大小由文件系统与调用方负责，服务层不按尺寸改语义）。
+   * @param {string|null} [name] PAC 名（无则默认面）
+   * @returns {Promise<{kind: 'content'|'template', content?: string, proxy?: string}|null>}
+   */
+  async resolvePacRender(name = null) {
+    const pac = (this.config && this.config.pac) || {};
+
+    if (name) {
+      const file = await this.resolvePacFile(name);
+      if (!file) {
+        return null;
+      }
+      return { kind: 'content', content: await fs.readFile(file, 'utf8') };
+    }
+
+    if (pac.content) {
+      return { kind: 'content', content: pac.content };
+    }
+
+    if (pac.filePath && !(await this.isDirectory(pac.filePath))) {
+      const resolved = path.resolve(pac.filePath);
+      if (await this.isFile(resolved)) {
+        return { kind: 'content', content: await fs.readFile(resolved, 'utf8') };
+      }
+    }
+
+    return { kind: 'template', proxy: this.generateDefaultProxyString() };
   }
 
   /**

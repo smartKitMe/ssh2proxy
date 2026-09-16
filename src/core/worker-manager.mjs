@@ -85,15 +85,15 @@ const taskHandlers = {
   /**
    * PAC 渲染：渲染 PAC 文本，返回含 `FindProxyForURL` 的字符串。
    *
-   * 契约（run-lead 附带要求 / C4 审查门风险登记）：
-   *  - `payload.name == null`（即 `/proxy.pac` 默认面）→ 返回默认模板文本（含 `FindProxyForURL`）；
-   *  - `payload.name` 有值但**没有任何可服务内容**（未传 `content`/`raw`）→ 返回 **`null`（未命中）**，
-   *    **不得**伪造含 `FindProxyForURL` 的串，否则调用方的 200 分支会覆盖按名查找应有的 404 语义；
-   *  - 调用方可通过 `knownNames: string[]` 声明已装载的 PAC 名（D-015/D-105 多 PAC）：
-   *      · `name` 在 `knownNames` 中 且 传了 `content`/`raw` → 返回该内容；
-   *      · `name` 在 `knownNames` 中 但未传内容 → 用 `defaultProxy`/`socksPort` 渲染该名的模板；
-   *      · `name` 不在 `knownNames` 中 → 返回 `null`。
-   * @param {{ name?: string|null, content?: string, raw?: string, defaultProxy?: string, socksPort?: number, knownNames?: string[] }} payload
+   * 契约（H3-S304 修订：**配置是端口的唯一真源**，本 handler 不含任何硬编码端口）：
+   *  - `payload.content` / `payload.raw`（调用方按配置解析好的 PAC 文本，含按名命中的文件内容）→ 原样返回；
+   *  - `payload.renderProxy`（调用方按 `config.proxy.socksPort` 归一化后的代理串，模板见
+   *    `config.pac.defaultProxy`）→ 用该串渲染模板；
+   *  - 以上均缺失 → 抛错（**不再回落 1080**）。旧实现的 `Number(payload.socksPort) || 1080` 会让
+   *    `--socks-port 1090` 的部署把浏览器指向未监听的 1080，破坏 `pac-service.mjs` 声明的端口单一来源；
+   *    现在端口只可能来自调用方传入的配置值，worker 侧不做任何猜测。
+   *  - 未命中语义（保留）：`name` 有值且未随 `content`/`raw` 提供内容、且不在 `knownNames` 中 → 返回 `null`。
+   * @param {{ name?: string|null, content?: string, raw?: string, renderProxy?: string, defaultProxy?: string, knownNames?: string[] }} payload
    * @returns {Promise<string|null>} PAC 文本，或 `null` 表示「未命中该名」
    */
   async renderPac(payload = {}) {
@@ -119,10 +119,15 @@ const taskHandlers = {
       }
     }
 
-    const socksPort = Number(payload.socksPort) || 1080;
-    const defaultProxy = typeof payload.defaultProxy === 'string' && payload.defaultProxy.length > 0
-      ? payload.defaultProxy
-      : `SOCKS5 127.0.0.1:${socksPort}; SOCKS 127.0.0.1:${socksPort}; DIRECT`;
+    // 端口唯一来源：调用方按 config.proxy.socksPort 归一化后的代理串（本处不做任何端口推断）
+    const renderProxy = typeof payload.renderProxy === 'string' && payload.renderProxy.length > 0
+      ? payload.renderProxy
+      : (typeof payload.defaultProxy === 'string' && payload.defaultProxy.length > 0 ? payload.defaultProxy : null);
+    if (!renderProxy) {
+      throw new Error(
+        'renderPac requires `content`, `raw` or a config-derived `renderProxy`; the worker does not infer proxy ports'
+      );
+    }
 
     // 与仓库内 proxy.pac.js 的模板语义一致（本地/内网直连 + 默认 SOCKS5），按名渲染
     return [
@@ -139,7 +144,7 @@ const taskHandlers = {
       '    }',
       '',
       '    // 默认使用SOCKS5代理',
-      `    return "${defaultProxy}";`,
+      `    return "${renderProxy}";`,
       '}',
       '',
     ].join('\n');
@@ -304,7 +309,13 @@ class WorkerManager {
   }
 
   /**
-   * 分配任务：优先投递到轮询选出的存活 worker；无可用 worker 时在主线程用同一 handler 表真实执行
+   * 分配任务：优先投递到轮询选出的存活 worker；**无任何存活 worker** 时在主线程用同一 handler 表真实执行。
+   *
+   * H3-S303：降级判据 MUST 覆盖「worker 存在但全部不可用」——旧实现只查 `workers.length === 0`，
+   * 当所有索引已 `dead`（重启次数用尽）时 `pickWorkerIndex()` 返回 -1，任务被推入等待队列且
+   * `drainQueue()` 永远选不出 worker ⇒ Promise 永不 settle（调用方 `/proxy.pac` 请求永久挂起）。
+   * 现在该情形与「池未启动」一并走主线程执行，与 CLAUDE.md/本注释声称的
+   * 「main-thread fallback through the same handler table」一致（handler 表共用，结果同形同值）。
    * @param {{type: string}} taskData 任务数据（payload MUST 可结构化克隆）
    * @returns {Promise<any>}
    */
@@ -319,14 +330,15 @@ class WorkerManager {
       );
     }
 
-    // 降级：池未启动 / 不支持多线程 / 无存活 worker → 主线程用同一 handler 表真实执行（同形同值）
+    // 降级：池未启动 / 不支持多线程 / 无存活 worker（全 dead 或缺失）→ 主线程用同一 handler 表真实执行
     if (!this.isSupported || this.workers.length === 0) {
       return this.runOnMainThread(type, taskData);
     }
 
     const index = this.pickWorkerIndex();
     if (index === -1) {
-      return this.enqueueTask(type, taskData);
+      // H3-S303：无任何存活 worker（全部 dead/restarting）→ 不再入队（入队将永不 settle）
+      return this.runOnMainThread(type, taskData);
     }
 
     return this.dispatchToWorker(index, type, taskData);

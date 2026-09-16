@@ -51,6 +51,10 @@ class LoadBalancedConnectionPool extends EventEmitter {
       // M-B′：关闭窗口内建成但被销毁（未入池）的隧道数
       closingDiscarded: 0
     };
+    // H3-S301：ACQUIRE_TIMEOUT 后被回收的孤儿隧道数（可观测，供守恒断言使用）
+    this.stats.orphanDiscarded = 0;
+    // H7-S307：round-robin 游标（仅 loadBalancingStrategy === 'round-robin' 时参与选路）
+    this.roundRobinCursor = 0;
   }
 
   /** 池上限（未配置视为不设限，保证旧调用点行为不变） */
@@ -74,7 +78,11 @@ class LoadBalancedConnectionPool extends EventEmitter {
     for (let i = 0; i < this.minSize; i++) {
       try {
         const tunnelObject = await this.createTunnel();
-        this.attach(tunnelObject);
+        // M-B″/H3-S302：attach() 在关闭态返回 null（并销毁该隧道），此时 MUST NOT 继续预建
+        if (!this.attach(tunnelObject)) {
+          console.warn('Pool was closed while initializing; aborting pre-fill');
+          break;
+        }
         console.log(`Initialized tunnel ${i + 1}/${this.minSize}`);
       } catch (err) {
         console.error('Failed to initialize tunnel:', err);
@@ -178,13 +186,61 @@ class LoadBalancedConnectionPool extends EventEmitter {
       || null;
   }
 
-  /** 按当前连接数归位到 pool（空闲）或 usedTunnels（使用中） */
+  /**
+   * 按当前连接数归位到 pool（空闲）或 usedTunnels（使用中）
+   *
+   * H3-S302：关闭态守护 MUST 覆盖本方法——它是所有「入池」路径的汇聚点
+   * （acquire 新建 / initialize / 自动扩容 / 维护补建 / release 回填）。
+   * 旧实现只在 acquire/initialize 入口查 closed，维护路径绕过后即可把隧道注入已关闭的池。
+   * 关闭时：销毁该隧道对象（计入 closingDiscarded + closedTunnels）并返回 null，调用方据此拒绝/中止。
+   * @param {Object} tunnelObject 隧道对象
+   * @returns {Object|null} 入池后的隧道对象；池已关闭时返回 null（且隧道已销毁）
+   */
   attach(tunnelObject) {
+    if (!tunnelObject) return null;
+    if (this.closed) {
+      this.discardTunnelObject(tunnelObject, 'attach-after-close');
+      return null;
+    }
     this.pool = this.pool.filter(item => item !== tunnelObject);
     this.usedTunnels = this.usedTunnels.filter(item => item !== tunnelObject);
     if (tunnelObject.connectionCount > 0) this.usedTunnels.push(tunnelObject);
     else this.pool.push(tunnelObject);
     this.updateSortedTunnelList();
+    return tunnelObject;
+  }
+
+  /**
+   * 把**已建成的隧道实例**纳入池（H3-S302：为维护路径提供的公开 API）
+   * 生产维护路径原先直写 `connectionPool.pool.push({...})`：既绕过关闭态守护，也不计 `stats.createdTunnels`。
+   * 本方法统一承担「关闭态拒绝 + 计数 + 入池」三件事，使关闭态保证覆盖该路径。
+   * @param {Object} tunnel 已连接（或即将连接）的隧道实例
+   * @returns {Object|null} 入池后的隧道对象；池已关闭时返回 null（且隧道已关闭）
+   */
+  registerTunnel(tunnel) {
+    if (!tunnel) return null;
+    if (this.closed) {
+      try {
+        if (typeof tunnel.close === 'function') tunnel.close();
+      } catch (err) {
+        console.warn('Failed to close tunnel rejected by closed pool:', err && err.message ? err.message : err);
+      }
+      this.stats.rejectedAcquires++;
+      return null;
+    }
+    const tunnelObject = {
+      tunnel,
+      connectionCount: 0,
+      lastUsed: Date.now(),
+      isActive: true
+    };
+    // 审查门登记项：registerTunnel 入池的隧道同样 MUST 挂生命周期监听器，
+    // 否则其 close/end/error 不会把对象移出池（与 createTunnel 的 wireTunnelEvents 口径一致）
+    this.wireTunnelEvents(tunnel);
+    this.stats.createdTunnels++;
+    if (!this.attach(tunnelObject)) {
+      return null;
+    }
     return tunnelObject;
   }
 
@@ -216,7 +272,13 @@ class LoadBalancedConnectionPool extends EventEmitter {
   }
 
   /**
-   * 最少连接策略选择：比较 connectionCount，且必须未达单隧道连接阈值（C2-04）
+   * 选择可承接新连接的隧道（策略由 `connectionPool.loadBalancingStrategy` 决定，H7-S307）
+   *
+   * 支持的策略（未识别值回落 'least-connections' 并可观测）：
+   *  - `'least-connections'`（默认）：比较 `connectionCount`，平手按 `lastUsed`（C2-04；
+   *    且必须未达单隧道连接阈值 `maxConnectionsPerTunnel`）；
+   *  - `'round-robin'`：在**合格**隧道间按游标轮转（同样排除已达阈值的隧道），
+   *    使 `--load-balancing-strategy round-robin` 之类配置真正改变分派行为，而不再只是被回显。
    * @returns {Object|null} 可承接新连接的隧道对象
    */
   selectLeastLoadedTunnel() {
@@ -224,6 +286,13 @@ class LoadBalancedConnectionPool extends EventEmitter {
     const eligible = all.filter(item => item.connectionCount < this.maxConnectionsPerTunnel);
     if (eligible.length === 0) return null;
 
+    if (this.loadBalancingStrategy === 'round-robin') {
+      const index = this.roundRobinCursor % eligible.length;
+      this.roundRobinCursor = (index + 1) % Math.max(1, eligible.length);
+      return eligible[index];
+    }
+
+    // 默认（含未识别值）：least-connections + lastUsed 平手判定
     eligible.sort((a, b) => (a.connectionCount - b.connectionCount) || (a.lastUsed - b.lastUsed));
     return eligible[0];
   }
@@ -247,13 +316,20 @@ class LoadBalancedConnectionPool extends EventEmitter {
 
       // 未达池上限 → 新建隧道（失败则原样抛出，保持旧调用点语义）
       if (this.total() < this.limitMaxSize()) {
-        const created = await this.withTimeout(this.createTunnel(), Math.max(1, timeout - (Date.now() - startTime)));
+        // H3-S301：超时窗口内建成的隧道不得成为孤儿（awaitTunnelWithin 负责超时后销毁）
+        const created = await this.awaitTunnelWithin(this.createTunnel(), Math.max(1, timeout - (Date.now() - startTime)));
         // M-B′：await 期间池可能已被 close()，此时新隧道 MUST 销毁且不得入池（否则关闭后仍返回活隧道并复活池）
         if (this.closed) {
           this.discardTunnelObject(created, 'discarded new');
           this.throwIfClosed();
         }
-        this.attach(created);
+        // M-B″/H3-S302：attach() 内部亦复查 closed（防关闭后经 attach 注活隧道）
+        if (!this.attach(created)) {
+          this.throwIfClosed();
+          const error = new Error('Connection acquire rejected: pool is closed');
+          error.code = 'POOL_CLOSED';
+          throw error;
+        }
         return this.dispatchTunnel(created, startTime);
       }
 
@@ -283,13 +359,22 @@ class LoadBalancedConnectionPool extends EventEmitter {
 
   /**
    * 关闭窗口内已建成的隧道：立即销毁且不入池（M-B′）
-   * 说明：createTunnel() 已执行（计入 createdTunnels），但该隧道不得进入池；
-   * closingDiscarded 记录此类被销毁的隧道数，故「净入池 = createdTunnels - closingDiscarded」。
+   * 说明：`createTunnel()` 已执行（计入 createdTunnels），但该隧道不得进入池。
+   *
+   * 守恒式（H3-S301 修正）：被销毁而**从未入池**的隧道有两条来源，均须计入——
+   *   ① `closingDiscarded`：关闭窗口内建成（`reason` 为关闭相关，如 `discarded new` / `attach-after-close`）；
+   *   ② `orphanDiscarded`：`ACQUIRE_TIMEOUT` 后被回收的孤儿（`reason` 含 `orphaned`）。
+   * 因此「净入池 = createdTunnels − closingDiscarded − orphanDiscarded」；
+   * 旧注释漏掉 ②，正是 H3-S301 的资源泄漏在注释层面的体现（超时路径上的已握手隧道曾被永久孤立）。
+   * @param {Object} tunnelObject 隧道对象
+   * @param {string} [reason] 处置原因（用于日志与计数归类）
    */
   discardTunnelObject(tunnelObject, reason = 'discarded') {
     if (!tunnelObject) return;
     tunnelObject.isActive = false;
-    this.stats.closingDiscarded++;
+    // H3-S301：孤儿（超时回收）与关闭窗口丢弃分开计数，便于守恒断言区分
+    if (String(reason).includes('orphan')) this.stats.orphanDiscarded++;
+    else this.stats.closingDiscarded++;
     this.stats.closedTunnels++;
     try {
       tunnelObject.tunnel.close();
@@ -298,20 +383,38 @@ class LoadBalancedConnectionPool extends EventEmitter {
     }
   }
 
-  /** 在超时窗口内完成任务，超时抛出可识别的 acquire 超时错误 */
-  async withTimeout(promise, ms) {
+  /**
+   * 在超时窗口内等待建连，超时即拒绝且**不得留下孤儿隧道**（H3-S301）
+   * 说明：createTunnel() 一经调用就会跑到底并 `stats.createdTunnels++`（它无法被取消），
+   * 因此超时分支必须显式接管「稍后建成」的隧道对象并销毁，否则会出现
+   * `createdTunnels - closingDiscarded - orphanDiscarded > total()` 的资源泄漏（已握手的隧道永不 close）。
+   * 实现要点：不复用普通 `Promise.race` 超时器（它在超时后无法再捕获另一分支的兑现），
+   * 而是显式挂 `then/catch`，保证「兑现即处置」。
+   * @param {Promise<Object>} promise createTunnel() 的 Promise
+   * @param {number} ms 允许的等待毫秒数
+   * @returns {Promise<Object>} 隧道对象（仅在窗口内建成时）
+   * @throws {Error} code=ACQUIRE_TIMEOUT（超时，隧道已异步处置）
+   */
+  async awaitTunnelWithin(promise, ms) {
     let timer = null;
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error('Connection acquire timeout');
+        error.code = 'ACQUIRE_TIMEOUT';
+        reject(error);
+      }, ms);
+    });
     try {
-      return await Promise.race([
-        promise,
-        new Promise((resolve, reject) => {
-          timer = setTimeout(() => {
-            const error = new Error('Connection acquire timeout');
-            error.code = 'ACQUIRE_TIMEOUT';
-            reject(error);
-          }, ms);
-        })
-      ]);
+      return await Promise.race([promise, timeout]);
+    } catch (err) {
+      if (err && err.code === 'ACQUIRE_TIMEOUT') {
+        // 超时：接管稍后建成的隧道并立即销毁（孤儿回收），不改变本分支的拒绝结果
+        promise.then(
+          (created) => this.discardTunnelObject(created, 'orphaned by acquire timeout'),
+          () => {}
+        ).catch(() => {});
+      }
+      throw err;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -379,7 +482,10 @@ class LoadBalancedConnectionPool extends EventEmitter {
           this.discardTunnelObject(newTunnelObject, 'auto-expanded');
           return;
         }
-        this.attach(newTunnelObject);
+        // M-B″/H3-S302：attach() 关闭态返回 null 且已销毁隧道，不得继续计数/唤醒
+        if (!this.attach(newTunnelObject)) {
+          return;
+        }
         this.stats.expansions++;
         console.log(`Created new tunnel, total pool size: ${this.pool.length}, tunnelObject count: ${tunnelObject.connectionCount}`);
         this.dispatchWaiters();
@@ -434,6 +540,7 @@ class LoadBalancedConnectionPool extends EventEmitter {
         console.warn('Failed to close released tunnel:', err && err.message ? err.message : err);
       }
     } else {
+      // M-B″/H3-S302：关闭态下 attach() 返回 null（隧道已销毁），不得回填
       this.attach(tunnelObject);
     }
 

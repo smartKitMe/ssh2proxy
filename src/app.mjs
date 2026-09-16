@@ -197,7 +197,12 @@ class ProxyServer {
 
   /**
    * 热路径：把 PAC 渲染投递到 Worker 池（A21 的真实消费点）
-   * Worker 池不可用或结果不合规时返回 null，由调用方回落主线程渲染（MUST NOT 因可选用能力阻断 PAC 服务）
+   *
+   * H3-S304 修法：payload MUST 携带**按配置解析好的内容或归一化代理串**——
+   * 端口/内容只有一个真源（`PacService.resolvePacRender()`），worker 不再自行推断端口。
+   * 因此 `config.pac.content` / `pac.filePath` / `pac.directory` / `pac.files` / `pac.defaultProxy`
+   * 与 `config.proxy.socksPort` 在 worker 路径上与此前的主线程回退路径**完全同源**。
+   * Worker 池不可用或结果不合规时返回 null，由调用方回落主线程渲染（MUST NOT 因可选用能力阻断 PAC 服务）。
    * @param {string|null} name - PAC 名
    * @returns {Promise<string|null>} 渲染结果或 null
    */
@@ -210,7 +215,18 @@ class ProxyServer {
     this.logVerbose('assigning renderPac task to worker pool', { name, count: this.workerAssignCount });
 
     try {
-      const rendered = await this.workerManager.assignTask({ type: 'renderPac', payload: { name } });
+      // 内容解析与主线程回退路径同源（同一个 PacService）：未命中 → null（调用方 404，不冒充默认内容）
+      const resolved = await this.pacService.resolvePacRender(name);
+      if (!resolved) {
+        return null;
+      }
+
+      // 待发给 worker 的 payload 形状（worker 与主线程降级共用同一 handler 表 → 结果同形同值）
+      const payload = resolved.kind === 'content'
+        ? { name: name ?? null, content: resolved.content }
+        : { name: name ?? null, renderProxy: resolved.proxy };
+
+      const rendered = await this.workerManager.assignTask({ type: 'renderPac', payload });
       // 严格校验：仅接受可用的 PAC 文本，避免未实现该任务类型的池返回脏值
       if (typeof rendered === 'string' && rendered.includes('FindProxyForURL')) {
         return rendered;
@@ -909,6 +925,13 @@ class ProxyServer {
     // 关闭连接池（testingMode 的占位池没有 close，须守卫）
     if (this.connectionPool && typeof this.connectionPool.close === 'function') {
       await this.connectionPool.close();
+    }
+
+    // RT-02/X5：停止维护定时器（H3-S302 的可达性前提）——必须在池 close 之后调用，
+    // 否则 refill 建连在途时关闭池，维护路径仍会尝试向已关闭的池注入隧道。
+    // stopMaintenance() 幂等（定时器数组清空后再调用是 no-op），故重复 stop() 安全。
+    if (this.connectionInitializer && typeof this.connectionInitializer.stopMaintenance === 'function') {
+      this.connectionInitializer.stopMaintenance();
     }
 
     // 释放中间件资源（C3 契约提供 stop/close；旧版无该方法时跳过）
