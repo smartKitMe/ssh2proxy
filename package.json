@@ -27,7 +27,7 @@
     "dev": "vite",
     "lint": "eslint src/ --fix",
     "start": "node dist/cli.js",
-    "test": "mocha --recursive src/tests/ --exit",
+    "test": "mocha --recursive src/tests/",
     "clean": "rimraf dist/",
     "prepublishOnly": "npm run build"
   },

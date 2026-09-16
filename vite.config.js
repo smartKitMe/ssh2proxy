@@ -28,7 +28,8 @@ export default defineConfig({
       //   helmet         ← src/app.mjs:3
       //   winston        ← src/middleware/logger.mjs:1
       //   worker_threads ← src/core/worker-manager.mjs:1
-      //   http / https   ← src/app.mjs:4、src/core/http-proxy.mjs:1-2
+      //   http / https   ← src/app.mjs:4 与 src/app.mjs 内联实现（startHttpProxy / createHttpProxyServer；
+      //                     同名方法，非该独立模块 —— 后者已由 C5 作为死码删除，R-3 修正）
       //   net            ← src/app.mjs:5
       //   events         ← src/core/ssh-tunnel.mjs:2、src/core/socks-tunnel.mjs:2
       //   crypto         ← src/middleware/auth.mjs:1

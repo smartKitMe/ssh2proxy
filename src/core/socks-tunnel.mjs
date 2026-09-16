@@ -154,7 +154,9 @@ export class Socks5ConnectionPool {
       healthCheckRemovals: 0,
       dynamicAdjustments: 0,
       idleReaped: 0,
-      releases: 0
+      releases: 0,
+      // C2c（C2 §4.7-d 方案 A 的可选观测项）：建连在途期间遭遇 close()、被销毁丢弃的晚到 socket 数
+      lateDiscarded: 0
     };
 
     this.closed = false;
@@ -317,11 +319,22 @@ export class Socks5ConnectionPool {
 
       try {
         const socket = await this.createConnectionOnce(dstIP, dstPort, proxyOverride);
+        // C2c（C2 §4.7-d 方案 A）：建连在途期间发生 close() 时，晚到的 socket MUST 被销毁且不得进入活动集合，
+        // 并以 POOL_CLOSED 拒绝（与 §4.7 已封堵的 4 条路径同一语义）。
+        if (this.closed) {
+          this.destroySocket(socket);
+          this.stats.lateDiscarded++;
+          const closedError = new Error('SOCKS5 connection pool closed during connect');
+          closedError.code = 'POOL_CLOSED';
+          throw closedError;
+        }
         this.addToActive(key, socket);
         this.stats.totalConnections++;
         console.log(`New SOCKS5 connection created for ${key}`);
         return socket;
       } catch (error) {
+        // 关闭拒绝 MUST 直接透传：MUST NOT 被重试循环吞掉，否则会继续为已关闭的池建连
+        if (error && error.code === 'POOL_CLOSED') throw error;
         lastError = error;
         console.error(`SOCKS5 connection attempt ${attempt + 1}/${attempts} failed for ${key}: ${error.message}`);
       }
@@ -331,12 +344,23 @@ export class Socks5ConnectionPool {
     if (this.fallbackProxy && !proxyOverride) {
       try {
         const socket = await this.createConnectionOnce(dstIP, dstPort, this.fallbackProxy);
+        // C2c：备用路径是同形的第二条成功分支（同为 await 建连后入池），
+        // 若只修主分支，fallbackProxy 场景下同一泄漏仍然存在，故同步封堵（同一方案 A 代码形态）。
+        if (this.closed) {
+          this.destroySocket(socket);
+          this.stats.lateDiscarded++;
+          const closedError = new Error('SOCKS5 connection pool closed during connect');
+          closedError.code = 'POOL_CLOSED';
+          throw closedError;
+        }
         this.addToActive(key, socket);
         this.stats.totalConnections++;
         this.stats.failovers++;
         console.warn(`SOCKS5 connection created via fallback proxy for ${key}`);
         return socket;
       } catch (fallbackError) {
+        // 同主分支：关闭拒绝直接透传，不被故障转移兜底吞掉
+        if (fallbackError && fallbackError.code === 'POOL_CLOSED') throw fallbackError;
         lastError = fallbackError;
       }
     }
