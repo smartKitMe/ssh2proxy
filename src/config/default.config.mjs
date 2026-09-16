@@ -62,7 +62,20 @@ export default {
   proxy: {
     httpPort: 8080,
     socksPort: 1080,
-    pacPort: 8013 // 仅在pac.enabled为true时生效
+    pacPort: 8013, // 仅在pac.enabled为true时生效
+    adminPort: 8081, // 管理端点端口，仅在admin.enabled为true时生效（唯一来源，代码内无端口兜底）
+    httpsPort: 0, // HTTPS(CONNECT)代理端口，0 表示不监听（可由 --https-port 覆盖）
+    workerPoolSize: 2 // Worker 池线程数（PAC 渲染等任务的多线程执行；testingMode 下不启动）
+  },
+
+  // 测试模式：true 时不初始化连接池、不启动 Worker 池（供单元测试与本地探针使用）
+  testingMode: false,
+
+  // 限流配置（RateLimitMiddleware 的阈值来源；键缺失时回退中间件的默认值）
+  rateLimit: {
+    windowMs: 60000, // 固定窗口长度（毫秒）
+    max: 100, // 每个客户端 IP 每窗口允许的请求数
+    trustProxy: false // 是否信任 x-forwarded-for 头（默认不信任）
   },
   
   // PAC配置
@@ -70,7 +83,9 @@ export default {
     enabled: false, // 默认false，手动设置为true开启PAC服务
     filePath: '',
     content: '',
-    defaultProxy: 'SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT'
+    directory: '', // 多PAC：按请求名从该目录装载（GET /pac/:name）
+    files: {}, // 多PAC：显式映射 { '<请求名>': '<文件路径>' }，优先于 directory
+    defaultProxy: 'SOCKS5 127.0.0.1:1080; SOCKS 127.0.0.1:1080; DIRECT' // 回环端口会按实际 proxy.socksPort 归一化
   },
   
   // 认证配置
