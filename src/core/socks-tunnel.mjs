@@ -88,10 +88,6 @@ function parseHostPort(value) {
   return { host, port };
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
  * SOCKS5 连接池
  * 按目标（host:port）维护空闲/活跃连接，支持上限约束、排队、健康检查、
@@ -164,6 +160,9 @@ export class Socks5ConnectionPool {
     this.closed = false;
     this.cleanupTimer = null;
     this.healthCheckTimer = null;
+    // C2b（A1/A3）：在途的退避重试计时器集合 —— 既 unref（不阻止进程退出），
+    // 也可由 close() 取消（真回收，唤醒等待中的重试循环）
+    this.pendingBackoffs = new Set();
 
     // 启动空闲连接清理与健康检查
     this.startIdleCleanup();
@@ -307,7 +306,13 @@ export class Socks5ConnectionPool {
         this.stats.retries++;
         this.stats.retryDelays.push(delay);
         console.warn(`SOCKS5 connection retry ${attempt}/${attempts - 1} for ${key} in ${delay}ms`);
-        await sleep(delay);
+        // C2b：退避等待 unref + 可被 close() 取消
+        await this.backoffSleep(delay);
+        if (this.closed) {
+          const closedError = new Error('SOCKS5 connection pool closed during retry backoff');
+          closedError.code = 'POOL_CLOSED';
+          throw closedError;
+        }
       }
 
       try {
@@ -380,6 +385,35 @@ export class Socks5ConnectionPool {
   }
 
   /**
+   * 退避等待（C2b/A1/A3）：
+   * - 计时器 `unref()`：隧道对象不再阻止进程自然退出；
+   * - 登记进 `pendingBackoffs`：`close()` 可取消并立即唤醒（显式关闭时真回收，不留悬挂等待）。
+   */
+  backoffSleep(ms) {
+    return new Promise((resolve) => {
+      const entry = { timer: null, resolve: null };
+      const finish = () => {
+        if (entry.timer) clearTimeout(entry.timer);
+        this.pendingBackoffs.delete(entry);
+        resolve();
+      };
+      entry.resolve = finish;
+      entry.timer = setTimeout(finish, ms);
+      this.unrefTimer(entry.timer);
+      this.pendingBackoffs.add(entry);
+    });
+  }
+
+  /** 取消所有在途退避等待（close() 调用；立即唤醒，避免重试循环被悬挂） */
+  cancelPendingBackoffs() {
+    const cancelled = this.pendingBackoffs.size;
+    for (const entry of [...this.pendingBackoffs]) {
+      entry.resolve();
+    }
+    return cancelled;
+  }
+
+  /**
    * 等待连接释放（排队语义，A3/A5）
    */
   waitForConnection(key, host, port, startedAt) {
@@ -409,6 +443,9 @@ export class Socks5ConnectionPool {
         error.code = 'SOCKS5_WAIT_TIMEOUT';
         reject(error);
       }, this.waitTimeout);
+      // C2b/A1：排队等待计时器同样 unref —— 隧道不得阻止进程自然退出；
+      // 真回收路径：entry.resolve/reject 均 clearTimeout，close() 会 reject 所有在途 waiter 从而清理计时器
+      this.unrefTimer(timer);
 
       entry.resolve = (socket) => {
         if (entry.settled) return;
@@ -728,6 +765,12 @@ export class Socks5ConnectionPool {
       }
     }
     this.pendingRequests.clear();
+
+    // C2b/A3：取消在途退避等待并立即唤醒重试循环（真回收，不留悬挂计时器）
+    const cancelledBackoffs = this.cancelPendingBackoffs();
+    if (cancelledBackoffs > 0) {
+      console.log(`SOCKS5 pool: cancelled ${cancelledBackoffs} pending retry backoff(s)`);
+    }
 
     for (const connections of this.activeConnections.values()) {
       connections.forEach(socket => this.destroySocket(socket));
