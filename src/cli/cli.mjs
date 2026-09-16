@@ -2,31 +2,54 @@
 
 import { Command } from 'commander';
 import fs from 'fs/promises';
+import { realpathSync } from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
 import defaultConfig from '../config/default.config.mjs';
 import { mergeConfig, validateConfig } from '../utils/helpers.mjs';
 
 // 获取版本号
 async function getVersion() {
+  const candidates = [];
+  const addCandidate = (p) => {
+    if (p && !candidates.includes(p)) candidates.push(p);
+  };
+  // ① 直接运行场景（CLI 的正常路径）：argv[1] 即入口文件 —— dist/cli.js 或 src/cli/cli.mjs，
+  //    其上一级 / 上两级就是包根，故两种形态都能定位到包清单，且与 cwd 无关（npx / 全局安装均可）。
+  if (process.argv[1]) {
+    const entryDir = path.dirname(path.resolve(process.argv[1]));
+    addCandidate(path.join(entryDir, '..', 'package.json'));
+    addCandidate(path.join(entryDir, '..', '..', 'package.json'));
+  }
+  // ② 被 import 场景：按本文件位置推导。
+  //    MUST NOT 写 `new URL('../package.json', import.meta.url)`：Vite 会把该形态的 base
+  //    改写成 `self.location`（浏览器语义），产物在 Node 下抛 ReferenceError 并被吞掉，
+  //    --version 退化为 unknown（实测教训）。此处先 fileURLToPath 转成路径再拼接。
   try {
-    // 尝试多种方式获取package.json路径
-    const possiblePaths = [
-      path.join(process.cwd(), 'package.json'),
-      path.join(process.cwd(), '../package.json'),
-      path.join(process.cwd(), '../../package.json')
-    ];
-    
-    for (const packagePath of possiblePaths) {
+    const selfDir = path.dirname(fileURLToPath(import.meta.url));
+    addCandidate(path.join(selfDir, '..', 'package.json'));
+    addCandidate(path.join(selfDir, '..', '..', 'package.json'));
+  } catch (err) {
+    // import.meta.url 不可用时跳过该组候选
+  }
+  // ③ cwd 兜底（原有链保留）
+  addCandidate(path.join(process.cwd(), 'package.json'));
+  addCandidate(path.join(process.cwd(), '..', 'package.json'));
+  addCandidate(path.join(process.cwd(), '..', '..', 'package.json'));
+
+  try {
+    for (const packagePath of candidates) {
       try {
-        const packageJson = await fs.readFile(packagePath, 'utf8');
-        const pkg = JSON.parse(packageJson);
-        return pkg.version;
+        const pkg = JSON.parse(await fs.readFile(packagePath, 'utf8'));
+        // 只采信本包清单：避免读到 cwd 下无关项目的 package.json 而输出别人的版本号
+        if (pkg && pkg.name === 'ssh2proxy' && typeof pkg.version === 'string') {
+          return pkg.version;
+        }
       } catch (err) {
         // 继续尝试下一个路径
       }
     }
-    
+
     return 'unknown';
   } catch (err) {
     return 'unknown';
@@ -281,13 +304,20 @@ async function main() {
 /**
  * 入口守卫（D-109）：仅在直接执行本文件时启动服务；
  * 被 import（如 `await import('./src/cli/cli.mjs')`）时 MUST NOT 启动服务或连 SSH。
+ *
+ * 路径鲁棒性（R-cr-2，与 H2-S502 同形）：MUST 对**两侧都做 realpathSync 归一后再比较**。
+ * 反例（已实测）：经 junction/别名路径调用 `node <别名>/dist/cli.js --version` 时，
+ * `argv[1]` 是别名路径而 `import.meta.url` 是真实路径，字符串比较恒 false ⇒ main() 不执行 ⇒
+ * 空输出 + exit 0（与 H2-S502 完全同形的"静默不启动"）。归一后两种调用都成立。
  */
 const isDirectRun = (() => {
   if (!process.argv[1]) {
     return false;
   }
   try {
-    return pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+    const entry = realpathSync(path.resolve(process.argv[1]));
+    const self = realpathSync(fileURLToPath(import.meta.url));
+    return entry === self;
   } catch (err) {
     return false;
   }

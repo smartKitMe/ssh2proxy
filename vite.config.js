@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { isExternalSpecifier } from './scripts/check-externals.mjs';
 
 // 产物命名契约（缺陷 D-121 / D-122）：
 // 1) ESM 入口 = dist/index.mjs，CJS 入口 = dist/index.cjs，二者文件名互异，不再坍缩成同名单 index.js；
@@ -7,6 +8,11 @@ import { defineConfig } from 'vite';
 // 3) MUST NOT 在 rollupOptions.output 里再写 entryFileNames/chunkFileNames：
 //    它们会覆盖 lib.fileName，把 es/cjs 两种格式压成同一个名字（D-122 的根因），
 //    chunk/asset 命名交回 Vite 的按格式默认值。
+//
+// external 契约（H5-S503 / H6-S508 修复）：**单一真源**。
+// 名单与匹配函数只定义在 scripts/check-externals.mjs，本文件与 scripts/build-cli.mjs 都从这里引用；
+// 原先两份逐字重复的 15 项列表（已实际漂移：url 被误删、https 成幽灵、net 不覆盖 node:net）不再存在。
+// 匹配函数负责：`node:` 前缀归一、子路径（pkg/sub）、相对路径排除。
 export default defineConfig({
   build: {
     outDir: 'dist',
@@ -18,46 +24,10 @@ export default defineConfig({
       formats: ['es', 'cjs']
     },
     rollupOptions: {
-      // external 逐项判定（判据：src 非测试代码中存在 import 引用点；由
-      // artifacts/check-externals.mjs 做「无幽灵 + 无遗漏」双向机械校验）：
-      //   ssh2           ← src/core/ssh-tunnel.mjs:1
-      //   socks          ← src/core/socks-proxy.mjs:1、src/core/socks-tunnel.mjs:1
-      //   express        ← src/app.mjs:2
-      //   commander      ← src/cli/cli.mjs:3
-      //   cors           ← src/app.mjs:1
-      //   helmet         ← src/app.mjs:3
-      //   winston        ← src/middleware/logger.mjs:1
-      //   worker_threads ← src/core/worker-manager.mjs:1
-      //   http / https   ← src/app.mjs:4 与 src/app.mjs 内联实现（startHttpProxy / createHttpProxyServer；
-      //                     同名方法，非该独立模块 —— 后者已由 C5 作为死码删除，R-3 修正）
-      //   net            ← src/app.mjs:5
-      //   events         ← src/core/ssh-tunnel.mjs:2、src/core/socks-tunnel.mjs:2
-      //   crypto         ← src/middleware/auth.mjs:1
-      //   path           ← src/cli/cli.mjs:5
-      //   fs/promises    ← src/cli/cli.mjs:4、src/core/pac-service.mjs:1
-      // 已删除的幽灵项（src 零引用，同 C1-07 登记的幽灵运行时依赖一类）：'fs'（源码只用
-      // fs/promises）、util、os、zlib、buffer。注意 'fs' 与 'fs/promises' 是不同说明符，
-      // 不可互相替代，故只删 'fs'、保留 'fs/promises'。
-      external: [
-        'ssh2', 
-        'socks', 
-        'express', 
-        'worker_threads',
-        'http',
-        'https',
-        'net',
-        'fs/promises',
-        'events',
-        'crypto',
-        'path',
-        'commander',
-        'cors',
-        'helmet',
-        'winston'
-      ],
+      external: isExternalSpecifier,
       output: {
         // 本工程 lib / CLI 两类构建都不产出 css、图片等静态资源，此配置当前**无产物消费者**
-        // （惰性配置，审查门发现②），已登记 handoff/known_issues.md；保留以固定资源命名契约。
+        // （惰性配置），保留以固定资源命名契约。
         assetFileNames: '[name].[ext]'
       }
     }
