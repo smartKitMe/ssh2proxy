@@ -3,7 +3,7 @@ import net from 'node:net';
 
 // 检查是否为IPv4地址
 // 委托 node:net（RD-C3-03 第 4 条）：'999.1.1.1' / '127.1' 等非规范形态正确为 false
-// 语义变更登记见 handoff/known_issues.md（旧正则版对 '999.1.1.1' 返回 true）
+// 语义变更：旧正则实现对 '999.1.1.1' 返回 true，现为 false（由 node:net 判定）
 function isIPv4(host) {
   if (typeof host !== 'string') return false;
   return net.isIPv4(host);
@@ -11,7 +11,7 @@ function isIPv4(host) {
 
 // 检查是否为IPv6地址
 // 委托 node:net（RD-C3-03 第 3 条）：A5 期望表逐项一致，含 IPv4-mapped '::ffff:127.0.0.1' === true
-// 语义变更登记见 handoff/known_issues.md（旧实现 host.includes(':') && !host.includes('.') 对 mapped 地址返回 false）
+// 语义变更：旧实现 `host.includes(':') && !host.includes('.')` 对 mapped 地址返回 false，现为 true
 function isIPv6(host) {
   if (typeof host !== 'string') return false;
   return net.isIPv6(host);
@@ -78,7 +78,10 @@ function mergeConfig(defaultConfig, userConfig) {
 
 // 验证配置：返回错误数组（空数组=通过）
 // 健壮性修正：缺省段不再因 config.ssh/config.proxy 缺失而抛 TypeError
-// 消费者在 CLI/app 启动路径（C4 write_paths），登记为「待接线」见 known_issues.md
+// 消费点（实测 3 处）：`ProxyServer#assertStartableConfig()`、`POST /api/config` 的校验回显（均在 src/app.mjs）
+// 与 `validateStartupConfig()`（src/cli/cli.mjs）——均已真实接线。
+// 校验范围（MUST 知悉）：只校验 `proxy.httpPort` 与 `proxy.socksPort`；
+// `proxy.httpsPort` / `proxy.pacPort` / `proxy.adminPort` 与 `connectionPool.*` 的取值不在本函数覆盖范围内。
 function validateConfig(config) {
   const errors = [];
   const target = config || {};

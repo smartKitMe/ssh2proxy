@@ -57,7 +57,8 @@ class LoggerMiddleware {
   }
 
   // 记录隧道/代理事件（event 由调用方给出）
-  // 待接线（C4）：app.mjs 的隧道 connect/close/error 路径（见 handoff/known_issues.md §5）
+  // 已接线（实测 8 处消费，均在 src/app.mjs）：HTTPS CONNECT 的 connect/error、HTTP request 的 connect/error、
+  // 池 acquire/release，以及 SOCKS5 路径的 error。
   // F2 复审裁定：前缀恢复原名 `SSH`（无功能理由的命名变更属噪音，已回退 logSshEvent 的 `Tunnel` 改动）
   logSshEvent(event, data) {
     this.logger.info(`SSH ${event}`, data);
@@ -68,7 +69,7 @@ class LoggerMiddleware {
     this.logger.error(context, { error: error.message, stack: error.stack });
   }
 
-  // 记录性能指标（当前真实调用点：本文件 logHttpRequest 的 finish 回调）
+  // 记录性能指标（真实调用点：本文件 logHttpRequest 的 finish 回调 + src/app.mjs 的 4 处路径指标）
   logPerformance(metric, value, meta = {}) {
     this.logger.info('Performance', { metric, value, ...meta });
   }

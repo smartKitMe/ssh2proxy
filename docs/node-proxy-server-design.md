@@ -90,7 +90,7 @@ Username: admin_generated_8f3b2d1a
 Password: 9f4c2a7d1b8e3506c9af
 ```
 
-凭证由 `crypto.randomBytes()` 生成并转成十六进制字符串（`src/middleware/auth.mjs:104-118`、`:99-101`），因此形如 `secure_password_…` 的示例形态不可能是实现的真实输出。校验为恒定时间比较（HMAC-SHA256 归一 + `timingSafeEqual`）。
+凭证由 `crypto.randomBytes()` 生成并转成十六进制字符串（`AuthMiddleware#generateAdminCredentials()` 与 `#generateRandomPassword()`，见 `src/middleware/auth.mjs`），因此形如 `secure_password_…` 的示例形态不可能是实现的真实输出。校验为恒定时间比较（HMAC-SHA256 归一 + `timingSafeEqual`）。
 
 建议在生产环境中手动配置管理端点的用户名和密码，以确保安全性。
 
@@ -248,7 +248,7 @@ function FindProxyForURL(url, host) {
 }
 ```
 
-SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数据源）包含 `sshConnected`、`activeConnections`、`totalConnections`、`lastError`、`uptime` 等字段，其中连接数取自上述 `getStatus()` 契约字段而非已移除的 `usedConnections`。
+SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数据源）的真实键集为 `sshConnected`、`activeConnections`、`totalConnections`、`availableConnections`、`available`、`used`、`total`、`poolStatus`、`workerPool`、`uptime`（**不含 `lastError`**，该字段未实现）。其中连接数取自池的 `getStatus()` 契约字段（`used`/`total`/`available`），而非已移除的 `usedConnections`。
 
 ## 5. 业务逻辑层
 
@@ -256,18 +256,18 @@ SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数�
 - 建立SSH连接：使用ssh2库建立到远程服务器的安全连接
 - 建立上游SOCKS5连接：连接到需要认证的上游SOCKS5代理
 - 维持隧道连接状态：监控连接状态，处理断线重连
-- 处理连接异常和重连机制：实现指数退避重连策略（SOCKS5 建连重试的权威来源是 `connectionPool.retryAttempts`/`retryDelay`，退避倍数 `retryBackoffFactor`、上限 `retryMaxDelay`）
+- 处理连接异常和重连机制：实现指数退避重连策略（SOCKS5 建连重试的权威来源是 `connectionPool.retryAttempts`/`retryDelay`，退避倍数 `retryBackoffFactor`、上限 `retryMaxDelay`；SSH 侧同名键的内置默认定义在 `src/core/ssh-tunnel.mjs` 的 `DEFAULT_RETRY`）
 - SSH隧道重试机制：当SSH隧道因未知原因中断时，自动重试确保连接正常
-- 连接池管理：维护多个隧道连接以提高性能，降低网络开销引起的延迟（`LoadBalancedConnectionPool`，最少连接策略比较 `connectionCount`）
+- 连接池管理：维护多个隧道连接以提高性能，降低网络开销引起的延迟（`LoadBalancedConnectionPool`，策略由 `connectionPool.loadBalancingStrategy` 分派：`least-connections` 比较 `connectionCount`、平手按 `lastUsed`；`round-robin` 按游标轮转；未识别值回落 `least-connections`）
 - 支持动态切换隧道类型：根据配置 `tunnel.type`（`ssh` / `socks5`）选择使用SSH隧道或上游SOCKS5代理
 - 连接预初始化：代理 `start()` 时基于连接池配置初始化网络连接（`ConnectionInitializer#initializeConnections()`），并按 `startMaintenance()` 维持
 
 ### 5.2 多线程支持
-- 实现：`node:worker_threads` 真实 worker 池（`src/core/worker-manager.mjs`），非"检测到才启用"的条件分支；声明常量 `DEFAULT_POOL_SIZE = 2`（`src/core/worker-manager.mjs:20`）
-- 容量：`options.size` > `config.proxy.workerPoolSize` > 声明常量（`src/core/worker-manager.mjs:152-164`）
-- 启动点：`ProxyServer.start()` → `startWorkerPool()`（`src/app.mjs:167-176`，由 `src/app.mjs:344` 调用；`testingMode` 为 true 时不启动）
-- 真实消费点：PAC 渲染热路径 `renderPacViaWorker()` → `assignTask({ type: 'renderPac' })`（`src/app.mjs:184-203`，`src/core/worker-manager.mjs:311`）；未命中名返回 `null`（`src/core/worker-manager.mjs:99-118`），池不可用或结果不合规时回落主线程同一 handler 表，不阻断 PAC 服务
-- 生命周期：`start()`（`src/core/worker-manager.mjs:208`）/ `close()`（`:676`）/ 可观测 `getStats()`（`:639`）
+- 实现：`node:worker_threads` 真实 worker 池（`src/core/worker-manager.mjs`），非"检测到才启用"的条件分支；声明常量 `DEFAULT_POOL_SIZE = 2`（同文件 `WorkerManager`）
+- 容量：`options.size` > `config.proxy.workerPoolSize` > 声明常量（`WorkerManager#constructor()`）
+- 启动点：`ProxyServer.start()` → `startWorkerPool()`（均在 `src/app.mjs`；`testingMode` 为 true 时不启动）
+- 真实消费点：PAC 渲染热路径 `renderPacViaWorker()` → `assignTask({ type: 'renderPac' })`；**端口/内容只有一个真源**——`PacService#resolvePacRender()` 先在主线程解析（命中文件/显式内容 → `content`；默认面 → `renderProxy` 代理串），payload 只携带解析结果；worker 侧 `renderPac()` 在 payload 无 `content`/`raw`/`renderProxy` 时**抛错，不再回落 1080**。按名未装载时 `resolvePacRender()` 返回 `null`（调用方 404，不冒充默认内容）；池不可用或结果不合规时回落主线程同一 handler 表，不阻断 PAC 服务
+- 生命周期：`WorkerManager#start()` / `#close()` / 可观测 `#getStats()`（均在 `src/core/worker-manager.mjs`）
 - 崩溃补位：单个 worker 崩溃后按索引在 25ms 内重启（`MAX_RESTARTS_PER_WORKER = 3`），补位后 `threadId` 会变化；超出上限则该索引保持 `dead` 且 `degraded = true`
 
 ### 5.3 连接预初始化
@@ -277,11 +277,11 @@ SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数�
 - 异步初始化：使用异步方式初始化连接，避免阻塞主线程（`connect()` 返回预热连接数，是可观测返回值）
 
 ### 5.4 管理端点服务
-- API端点管理：`GET /api/status` 与 `POST /api/config`（真读写运行配置，回显脱敏；`src/app.mjs:822-848`，脱敏见 `src/app.mjs:290-300`）
-- 认证保护：`/api/*` 使用 Basic 认证（恒定时间比较，`src/app.mjs:783-810`）
-- 服务开关控制：`admin.enabled` 决定是否启动（默认不开启；`src/app.mjs:360-362`）
-- 端口来源：`proxy.adminPort`（默认 8081）是唯一来源，缺键时不监听并打印告警（`src/app.mjs:772-777`）
-- 自动生成凭证：未配置时自动生成管理凭证并在启动日志打印（`src/app.mjs:232-241` 与 `src/middleware/auth.mjs:104-118`，与 `/api/*` 校验值同源）
+- API端点管理：`GET /api/status` 与 `POST /api/config`（真读写运行配置，回显脱敏；路由注册见 `ProxyServer#registerAdminRoutes()`，脱敏回显见 `ProxyServer#describeConfig()`，均在 `src/app.mjs`）
+- 认证保护：`/api/*` 使用 Basic 认证（恒定时间比较，`ProxyServer#validateAuth()` 与 `#registerAdminRoutes()`，`src/app.mjs`）
+- 服务开关控制：`admin.enabled` 决定是否启动（默认不开启；`ProxyServer#startAdminService()`）
+- 端口来源：`proxy.adminPort`（默认 8081）是唯一来源，缺键时不监听并打印告警（`ProxyServer#startAdminService()`）
+- 自动生成凭证：未配置时自动生成管理凭证并在启动日志打印（`ProxyServer#getAdminCredentials()` 与 `AuthMiddleware#generateAdminCredentials()`，与 `/api/*` 校验值同源）
 
 ### 5.5 HTTP/HTTPS代理处理
 - 解析HTTP请求：解析客户端发送的HTTP请求头和内容
@@ -298,10 +298,11 @@ SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数�
 - 限流粒度：计数键只含客户端 IP
 
 ### 5.7 PAC文件服务
-- 生成动态PAC文件内容：根据配置动态生成，回环端口按实际 `proxy.socksPort` 归一化（`src/core/pac-service.mjs:119-138`）
+- 生成动态PAC文件内容：由 `PacService#generateDefaultProxyString()` 统一生成，回环端口按实际 `proxy.socksPort` 归一化（`{socksPort}`/`{httpPort}`/`{host}` 占位符与历史 `127.0.0.1:<端口>` 一并替换）
 - 提供静态PAC文件服务：支持从文件系统加载PAC文件（`pac.filePath`）
-- 支持多PAC文件配置：`pac.files` 显式映射与 `pac.directory` 目录装载（`src/core/pac-service.mjs:28-83`）；按名未命中返回 **404**（`src/core/pac-service.mjs:149-155`），绝不用默认内容冒充
-- 路由：`/proxy.pac` 与 `/pac/:name`（`src/app.mjs:741-770`）
+- 支持多PAC文件配置：`pac.files` 显式映射与 `pac.directory` 目录装载（`PacService#resolvePacFile()`）；按名未命中返回 **404**（`PacService#handleRequest()`），绝不用默认内容冒充
+- worker 热路径同源：`PacService#resolvePacRender()` 在主线程解析后下发 payload，worker 不自行推断端口
+- 路由：`/proxy.pac` 与 `/pac/:name`（`src/app.mjs` 的 `startPacService()`）
 - MIME类型设置：`application/x-ns-proxy-autoconfig`
 - 服务开关控制：`pac.enabled` 决定是否启动PAC服务（默认不开启）
 
@@ -343,28 +344,28 @@ SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数�
 - `src/tests/integration/socks5-tunnel.integration.test.mjs`：真实 `ProxyServer` + 真实 HTTP 处理链 + 本地上游的真实 TCP 往返（请求行与 `Host` 校验、上游响应透传）
 - 真实连接池 `acquire()`/`release()` 记账与 `forwardOut()` 目标正确性
 - **负向对照**：上游不可达时必须失败并上抛错误，不得静默返回 200
-- **覆盖边界（诚实声明）**：集成测试在 `connectionPool.createTunnel` 注入 stub 隧道（`src/tests/integration/socks5-tunnel.integration.test.mjs:57-60`），只替换「建连 + forwardOut 的传输层」，**真实 SSH 握手不在覆盖范围内**；仓库内 `mock-ssh-server.mjs` 无法完成 ssh2 握手，未被任何测试使用；`supertest` 不是依赖也不被使用
+- **覆盖边界（诚实声明）**：集成测试在 `connectionPool.createTunnel` 注入 stub 隧道（`src/tests/integration/socks5-tunnel.integration.test.mjs`），只替换「建连 + forwardOut 的传输层」，**真实 SSH 握手不在覆盖范围内**；仓库内 `mock-ssh-server.mjs` 无法完成 ssh2 握手，未被任何测试使用；`supertest` 不是依赖也不被使用
 
 ### 7.3 性能测试
 - 当前仓库**不包含**性能基准脚本，也没有公开的性能数字：文档中不发布无法复跑的百分比或倍数
 - 需要量化时，可用池自带的计数器（`getPoolStats()` 的 `connectionHits`/`connectionMisses`/`avgWaitTime`）在目标环境实测；探针只绑 `127.0.0.1` 高位端口，避免占用生产端口
 
 ### 7.4 测试工具和环境
-- Mocha/Chai用于单元测试与集成测试（`npm test` → `mocha --recursive src/tests/ --exit`）
+- Mocha/Chai用于单元测试与集成测试（`npm test` → `mocha --recursive src/tests/`，**不带 `--exit`**：套件自然退出）
 - Node.js 内置 `node:test` 风格的探针/负向对照脚本位于运行根 `artifacts/`（不属于 `src/**`，不随包发布）
 
 ## 8. 部署和监控
 
-### 8.1 部署方案
-- Docker容器化部署
-- systemd服务部署（Linux）
-- Windows服务部署（可选）
+### 8.1 部署方案（设计愿景，当前仓库未实现）
+- Docker容器化部署（**未实现**：仓库内无 Dockerfile / compose 文件）
+- systemd服务部署（Linux）（**未实现**：无 unit 文件）
+- Windows服务部署（可选）（**未实现**）
 
-### 8.2 监控和日志
-- 实时连接数监控
-- 数据传输量统计
-- 错误率监控
-- 日志轮转和归档
+### 8.2 监控和日志（设计愿景，当前仓库未实现）
+- 实时连接数监控（**部分实现**：`GET /api/status` 暴露连接数；无独立监控组件）
+- 数据传输量统计（**未实现**：无字节计数）
+- 错误率监控（**未实现**：错误仅落日志）
+- 日志轮转和归档（**未实现**：winston 只有 Console transport）
 
 ### 8.3 安全考虑
 - 定期更新依赖库
@@ -419,7 +420,8 @@ vite.config.js          # Vite配置文件
 - `helmet`: 安全头部设置
 - `winston`: 日志记录
 - `commander`: 命令行参数解析
-- `worker_threads`: Node.js内置模块，用于多线程处理
+
+补充：`worker_threads` **不是依赖**，它是 Node.js 内置模块（`node:worker_threads`）。它唯一出现在构建配置里的位置是 Rollup external 名单 `EXTERNAL_MODULES`（单一真源 `scripts/check-externals.mjs`，`vite.config.js` 只引用该判定函数），属**构建期标记**，不是安装依赖；安装依赖清单里没有 `worker_threads` 这个包。
 
 ### 9.3 开发依赖包（`devDependencies`）
 - `mocha`: 测试框架
@@ -436,10 +438,12 @@ vite.config.js          # Vite配置文件
 ## 12. 构建和发布流程
 
 ### 12.1 构建脚本
-- `npm run build`: `clean` → `lint` → `vite build` → `build-cli`；**不运行测试套件**
-- `npm run lint`: `eslint src/ --fix`
-- `npm test`: 运行测试套件（`mocha --recursive src/tests/ --exit`）
+- `npm run build`: `clean` → `lint` → `vite build` → `build-cli` → `check-externals --strict`；**不运行测试套件**
+- `npm run lint`: `eslint src/ scripts/ --fix`
+- `npm test`: 运行测试套件（`mocha --recursive src/tests/`，**不带 `--exit`**）
 - `npm run build-cli`: 单独构建 CLI（`node scripts/build-cli.mjs`）
+- `npm run check-externals`: 校验 Rollup external 名单与真实 import 点一致
+- `npm start`: 运行已构建的 CLI（`node dist/cli.js`）
 - `npm run prepublishOnly`: 发布前执行 `npm run build`
 - 使用Vite进行代码构建和打包
 
@@ -478,12 +482,13 @@ vite.config.js          # Vite配置文件
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm run clean && npm run lint && vite build && npm run build-cli",
+    "build": "npm run clean && npm run lint && vite build && npm run build-cli && node scripts/check-externals.mjs --strict",
     "build-cli": "node scripts/build-cli.mjs",
+    "check-externals": "node scripts/check-externals.mjs",
     "dev": "vite",
-    "lint": "eslint src/ --fix",
+    "lint": "eslint src/ scripts/ --fix",
     "start": "node dist/cli.js",
-    "test": "mocha --recursive src/tests/ --exit",
+    "test": "mocha --recursive src/tests/",
     "clean": "rimraf dist/",
     "prepublishOnly": "npm run build"
   },
@@ -596,7 +601,7 @@ node src/cli/cli.mjs --version
 - `--pool-idle-timeout <number>`: 空闲连接超时时间（毫秒）
 - `-v, --verbose`: 启用详细日志输出（debug 级别）
 
-选项 → 配置键的唯一映射实现点是 `src/cli/cli.mjs` 的 `applyCliOptions()`（`src/cli/cli.mjs:88-165`，选项声明见 `:199-221`）；端口类非法值由 `toPort()` 拒绝并 `process.exit(1)`（`:63-70`、`:233-238`），启动前校验由 `validateStartupConfig()` 完成（`:174-187`：端口类 fail-fast，SSH 凭证缺失仅 `console.warn`）。
+选项 → 配置键的映射实现点是 `src/cli/cli.mjs` 的 `applyCliOptions()`（选项声明见同文件的 `program.option(...)` 调用；唯一例外 `--ssh-private-key-path` 由 `main()` 读取文件后写入 `config.ssh.privateKey`）；端口类非法值由 `toPort()` 拒绝并 `process.exit(1)`，启动前校验由 `validateStartupConfig()` 完成（端口类 fail-fast，SSH 凭证缺失仅 `console.warn`）。**本段一律用符号名定位，行号会漂移。**
 
 ## 11. 模块化使用
 
@@ -658,6 +663,9 @@ const proxyWithAllServices = new ProxyServer({
 
 // 使用上游SOCKS5代理的配置示例
 const proxyWithUpstreamSocks5 = new ProxyServer({
+  tunnel: {
+    type: 'socks5' // 必填：不写则默认 'ssh'，配置里的 upstreamSocks5 不会被使用
+  },
   upstreamSocks5: {
     host: 'upstream-proxy.com',
     port: 1080,
