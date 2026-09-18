@@ -9,7 +9,7 @@ import LoadBalancedConnectionPool from './core/load-balanced-connection-pool.mjs
 import PacService from './core/pac-service.mjs';
 import Socks5Proxy from './core/socks-proxy.mjs';
 import WorkerManager from './core/worker-manager.mjs';
-import AuthMiddleware from './middleware/auth.mjs';
+import AuthMiddleware, { parseBasicCredentials } from './middleware/auth.mjs';
 import LoggerMiddleware from './middleware/logger.mjs';
 import RateLimitMiddleware from './middleware/rate-limit.mjs';
 import { mergeConfig, validateConfig } from './utils/helpers.mjs';
@@ -53,28 +53,26 @@ export function hasValidCredentials(auth) {
 }
 
 /**
- * 解析 Basic 凭据明文（纯函数）。
+ * 解析 Basic 凭据（base64 原文）——**重新导出唯一真源**（D7-truth，T-2 + T-4）。
  *
- * **口径唯一来源（D5，跨面语义漂移修复）**：用户名 = **首个** `':'` 之前的部分，口令 = **其余全部**（口令本身可含 `':'`）。
- * 依 RFC 7617，Basic 凭据是 `base64(user:pass)`，`pass` 允许含 `':'`；历史实现在 `validateAuth()` 与
- * 管理端点 `'/api/*'` 两处都用 `credentials.split(':')`，只取第 2 段做口令 ⇒ 配置 `u:p:q` 时
- * 客户端发**正确**凭据仍被判错（实测代理面 407，而同一凭据经 Express `basicAuth` 200）⇒ **跨面漂移**。
+ * **口径唯一来源**：实现体已迁移至 `src/middleware/auth.mjs` 的 `parseBasicCredentials()` ——
+ *   `Buffer.from(x, 'base64').toString('utf8')` + **首个** `':'` 切分（用户名 = 首个 `':'` 之前，口令 = **其余全部**）。
+ * 本文件仅**重新导出**，供既有调用方与测试按原路径 import；口径由**实现唯一化**强制（三处共同消费同一函数），
+ * 不再靠注释维系。
  *
- * 本函数与 `src/middleware/auth.mjs#basicAuth` 的 `indexOf(':')` + `slice` **逐字同义**：
- *   用户名 `credentials.slice(0, i)`；口令 `credentials.slice(i + 1)`；无 `':'` ⇒ 返回 `null`（调用方 fail-closed）。
- * 三处 MUST 保持同口径；**新增任何 Basic 解析点都必须消费本函数**，不得再写 `split(':')`。
+ * 为什么唯一真源落在 `src/middleware/auth.mjs` 而不是本文件：本文件已 `import AuthMiddleware from
+ * './middleware/auth.mjs'`，反向 import 会造成循环依赖；中间件是认证语义基准面，故真源落于彼处。
  *
- * @param {string} credentials - 已 base64 解码的 `user:pass` 明文
- * @returns {{username: string, password: string}|null} 解析结果；无分隔符时为 null（不可解析 ⇒ 拒绝）
+ * 语义依据 RFC 7617 §2.1（`charset="UTF-8"`）。历史实现在本文件的两处用 `toString('ascii')`：
+ * `'ascii'` 逐字节 `& 0x7F` 截为 7 位（实测：`'ü'` 的 UTF-8 字节 `0xC3 0xBC` ⇒ 两个字符 `'C'`+`'<'`，
+ * 即 `"üser:pä:ss"` ⇒ `"C<ser:pC$:ss"`）⇒ 非 ASCII 凭据在
+ * 代理面/管理端点被判错、而在 Express `basicAuth`（`'utf8'`）被放行 ⇒ **跨面漂移**。
+ * 该行为修正是**有意的**；ASCII 凭据（0x00–0x7F）行为逐字不变。
+ *
+ * @param {string} base64Credentials - base64 编码的 `user:pass` 原文（不含 `Basic ` 前缀）
+ * @returns {{username: string, password: string}|null} 解析结果；无分隔符时为 null（不可解析 ⇒ 调用方 fail-closed）
  */
-export function parseBasicCredentials(credentials) {
-  const separatorIndex = credentials.indexOf(':');
-  if (separatorIndex === -1) return null;
-  return {
-    username: credentials.slice(0, separatorIndex),
-    password: credentials.slice(separatorIndex + 1)
-  };
-}
+export { parseBasicCredentials };
 
 /**
  * 构造转发到上游的请求行与 Host 头（纯函数，便于探针断言各端口/路径形态）
@@ -833,7 +831,11 @@ class ProxyServer {
   startAdminService() {
     // adminPort 唯一来源为配置（D-116 / plan R-2）：缺键时不得静默兜底，改为不监听 + 可解释日志
     if (!this.config.proxy.adminPort) {
-      console.warn('Admin endpoint is enabled but proxy.adminPort is not configured: admin endpoint NOT listening (awaiting config key, see known_issues.md)');
+      // D7-truth（T-3）：原字符串**只写文件名、不带任何 `tasks/.../handoff/` 路径**（仓库内不存在同名文件）
+      // ⇒ 进程会输出一条指向不存在文件的提示。改为**存在**登记文件的**成立锚点**：
+      // `tasks/D4-docs/handoff/cross_chunk_request.md` 的 CC-D4-8 即本运行时字符串的权威登记条目
+      //（该条原文标注「本块不可改」⇒ 由 D7-truth 落地修复）。**仅提示文本变更，无逻辑变更**。
+      console.warn('Admin endpoint is enabled but proxy.adminPort is not configured: admin endpoint NOT listening (awaiting config key, see tasks/D4-docs/handoff/cross_chunk_request.md CC-D4-8)');
       return;
     }
 
@@ -870,10 +872,11 @@ class ProxyServer {
       }
 
       const base64Credentials = authHeader.split(' ')[1];
-      const userCredentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-      // D5：与 validateAuth() 同口径（首个 ':' 前为用户名，其余全部为口令）。
-      // 本处原为 `split(':')`，与代理面是**同一缺陷的两个实例**（管理口令含 ':' 时正确凭据被判错）。
-      const parsed = parseBasicCredentials(userCredentials);
+      // D7-truth（T-2）：解码 + 切分统一消费唯一真源 parseBasicCredentials（base64 原文入参，utf8 解码）。
+      // 本处原为 `Buffer.from(base64Credentials, 'base64').toString('ascii')` —— `'ascii'` 逐字节
+      // `& 0x7F` 截为 7 位 ⇒ 非 ASCII 管理凭据被静默改写（跨面漂移）；切分原为 `split(':')`（D5 已收敛）。
+      // 入参 MUST 是 base64 原文（不是已解码明文）：前任改写此处时误删了上面这行声明 ⇒ ReferenceError（500）。
+      const parsed = parseBasicCredentials(base64Credentials);
 
       // 不可解析（无 ':'）⇒ fail-closed 拒绝，不放行也不抛异常
       if (!parsed) {
@@ -1011,11 +1014,11 @@ class ProxyServer {
 
     try {
       const base64Credentials = authHeader.split(' ')[1];
-      const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-      // D5（跨面语义漂移修复）：原实现 `credentials.split(':')` 只取第 2 段 ⇒ 口令含 ':' 时被截断，
-      // 正确凭据被判错（实测配置 `u:p:q` 经代理面 407，而经 Express basicAuth 200）。
-      // 改为与 `src/middleware/auth.mjs#basicAuth` 逐字同义的共享解析（口径唯一来源见 parseBasicCredentials）。
-      const parsed = parseBasicCredentials(credentials);
+      // D7-truth（T-2）：解码 + 切分统一消费唯一真源 parseBasicCredentials（base64 原文入参，utf8 解码）。
+      // 原实现 `Buffer.from(credentials, 'base64').toString('ascii')` 会逐字节 `& 0x7F` 截为 7 位
+      // ⇒ 非 ASCII 代理凭据在代理面被判错，而 Express basicAuth（utf8）放行 ⇒ **跨面漂移**（有意修正）。
+      // 切分原为 `credentials.split(':')`（D5 已收敛为「首个 ':' 前为用户名、其余全部为口令」）。
+      const parsed = parseBasicCredentials(base64Credentials);
       if (!parsed) {
         // 无 ':' ⇒ 凭据不可解析：fail-closed 拒绝（不得回退为「谁都能进」）
         return { authenticated: false, username: null };
