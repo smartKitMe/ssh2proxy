@@ -11,7 +11,9 @@
  *
  * 观测手段与 C6 集成测试同源：裸 TCP 经真实代理端口发 absolute-form 请求；
  * 「是否真的转发了」由**上游实收**（真实 echo 的副作用）判定，不依赖客户端读到的响应字节
- * （产品在转发路径上是透传语义，用 http 客户端会再包一层）。
+ * （产品在转发路径上用 `stream.pipe(res)` 把**上游整条原始响应字节**当作 body 灌进 `http.ServerResponse`，
+ * 见 `src/app.mjs` 的 `handleHttpRequest()` 内 ⇒ 客户端读到的是「响应套响应」，**并非逐字节透传**；
+ * 用 `http` 客户端只会再多包一层 chunked 解析，观测不到链路原始字节形态）。
  */
 
 import { describe, it, before, after, beforeEach, afterEach } from 'mocha';

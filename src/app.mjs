@@ -321,7 +321,7 @@ class ProxyServer {
   }
 
   /**
-   * 深合并更新配置（D-013：README/design 声称的 ProxyServer.updateConfig）
+   * 深合并更新配置（D-013：`docs/node-proxy-server-design.md` 声称的 ProxyServer.updateConfig）
    * @param {Object} newConfig - 增量配置
    * @returns {Object} 更新后的配置
    */
