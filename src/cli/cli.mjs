@@ -134,7 +134,7 @@ function applyCliOptions(config, options = {}) {
   // 已知缺口（H7-S410）：`proxy.host` 被本函数写入、被 `ProxyServer` 的监听参数读取
   // （`config.proxy.host ? [port, host] : [port]`，见 src/app.mjs），但 `src/config/default.config.mjs`
   // 的 `proxy` 段与示例配置**都没有该键** —— 未显式传入时行为等同「未配置」（Node 默认绑定）。
-  // 补默认键属改行为，已登记为跨 chunk 申请（见 handoff/cross_chunk_request.md 的 CC-D4-2）。
+  // 补默认键属改行为，已登记为跨 chunk 申请（见 `tasks/D4-docs/handoff/cross_chunk_request.md` 的 CC-D4-2）。
 
   // SSH 隧道
   if (options.sshHost) {

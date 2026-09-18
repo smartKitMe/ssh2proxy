@@ -53,6 +53,30 @@ export function hasValidCredentials(auth) {
 }
 
 /**
+ * 解析 Basic 凭据明文（纯函数）。
+ *
+ * **口径唯一来源（D5，跨面语义漂移修复）**：用户名 = **首个** `':'` 之前的部分，口令 = **其余全部**（口令本身可含 `':'`）。
+ * 依 RFC 7617，Basic 凭据是 `base64(user:pass)`，`pass` 允许含 `':'`；历史实现在 `validateAuth()` 与
+ * 管理端点 `'/api/*'` 两处都用 `credentials.split(':')`，只取第 2 段做口令 ⇒ 配置 `u:p:q` 时
+ * 客户端发**正确**凭据仍被判错（实测代理面 407，而同一凭据经 Express `basicAuth` 200）⇒ **跨面漂移**。
+ *
+ * 本函数与 `src/middleware/auth.mjs#basicAuth` 的 `indexOf(':')` + `slice` **逐字同义**：
+ *   用户名 `credentials.slice(0, i)`；口令 `credentials.slice(i + 1)`；无 `':'` ⇒ 返回 `null`（调用方 fail-closed）。
+ * 三处 MUST 保持同口径；**新增任何 Basic 解析点都必须消费本函数**，不得再写 `split(':')`。
+ *
+ * @param {string} credentials - 已 base64 解码的 `user:pass` 明文
+ * @returns {{username: string, password: string}|null} 解析结果；无分隔符时为 null（不可解析 ⇒ 拒绝）
+ */
+export function parseBasicCredentials(credentials) {
+  const separatorIndex = credentials.indexOf(':');
+  if (separatorIndex === -1) return null;
+  return {
+    username: credentials.slice(0, separatorIndex),
+    password: credentials.slice(separatorIndex + 1)
+  };
+}
+
+/**
  * 构造转发到上游的请求行与 Host 头（纯函数，便于探针断言各端口/路径形态）
  *
  * 其一：WHATWG `URL` **没有 `.path` 属性**（`urlObject.path` 恒为 `undefined`）——历史实现写作
@@ -847,7 +871,20 @@ class ProxyServer {
 
       const base64Credentials = authHeader.split(' ')[1];
       const userCredentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-      const [username, password] = userCredentials.split(':');
+      // D5：与 validateAuth() 同口径（首个 ':' 前为用户名，其余全部为口令）。
+      // 本处原为 `split(':')`，与代理面是**同一缺陷的两个实例**（管理口令含 ':' 时正确凭据被判错）。
+      const parsed = parseBasicCredentials(userCredentials);
+
+      // 不可解析（无 ':'）⇒ fail-closed 拒绝，不放行也不抛异常
+      if (!parsed) {
+        res.writeHead(401, {
+          'WWW-Authenticate': 'Basic realm="Admin Service"'
+        });
+        res.end('Unauthorized');
+        return;
+      }
+
+      const { username, password } = parsed;
 
       // 校验值来自唯一生成点；F9：常量时间比较（两个比较都执行，不做短路）
       const usernameMatches = constantTimeEqual(username, credentials.username);
@@ -975,7 +1012,15 @@ class ProxyServer {
     try {
       const base64Credentials = authHeader.split(' ')[1];
       const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-      const [username, password] = credentials.split(':');
+      // D5（跨面语义漂移修复）：原实现 `credentials.split(':')` 只取第 2 段 ⇒ 口令含 ':' 时被截断，
+      // 正确凭据被判错（实测配置 `u:p:q` 经代理面 407，而经 Express basicAuth 200）。
+      // 改为与 `src/middleware/auth.mjs#basicAuth` 逐字同义的共享解析（口径唯一来源见 parseBasicCredentials）。
+      const parsed = parseBasicCredentials(credentials);
+      if (!parsed) {
+        // 无 ':' ⇒ 凭据不可解析：fail-closed 拒绝（不得回退为「谁都能进」）
+        return { authenticated: false, username: null };
+      }
+      const { username, password } = parsed;
 
       // F9：常量时间比较；两个比较都执行（不做短路），避免泄漏「用户名是否正确」的时序。
       // 注意：上面已用 hasValidCredentials 保证配置侧两值非空，故这里的比较结果不会出现「空===空」的假通过。

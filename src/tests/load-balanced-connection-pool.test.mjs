@@ -9,7 +9,7 @@ import defaultConfig from '../config/default.config.mjs';
  *
  * 之所以必须桩化：真实 `SSHTunnel.connect()` 需要一个可用的 SSH 服务端，
  * 而仓库根目录的 `mock-ssh-server.mjs` 实测无法完成 ssh2 握手（D-135，见
- * `handoff/known_issues.md` 的负向对照证据），因此单元测试以桩隧道注入。
+ * `tasks/C6-tests/handoff/known_issues.md` 第 1 节 的负向对照证据），因此单元测试以桩隧道注入。
  *
  * 桩隧道是真实 `EventEmitter`，`close()` 会真实 `emit('close')` —— 这样产品侧
  * `wireTunnelEvents()` 注册的 close/end 消费者链路在测试中被真实触发，

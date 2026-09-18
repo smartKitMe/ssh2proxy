@@ -97,7 +97,7 @@ describe('SSH2Proxy', () => {
    * 且其进程退出语义不可在进程内安全断言。
    *
    * 替代覆盖：改为断言**导出的真实 CLI 映射实现** `applyCliOptions` / `validateStartupConfig` 的行为，
-   * 即私钥能力在配置链路上的真实入口。权威登记见 handoff/known_issues.md（含 CC-4 → C4）。
+   * 即私钥能力在配置链路上的真实入口。权威登记见 `tasks/C4-app-cli/handoff/known_issues.md`（含 CC-4 → C4）。
    */
   describe('CLI option mapping', () => {
     it('should apply CLI options onto the configuration', () => {
