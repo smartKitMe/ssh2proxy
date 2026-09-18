@@ -90,10 +90,10 @@ describe('SSH2Proxy', () => {
 
   /**
    * A5（D-125/D-028）：原用例在测试文件内**内联重写**了一个 `readPrivateKeyFile` 副本并自测该副本，
-   * 与 `src/cli/cli.mjs:54` 的产品实现语义相反（产品失败时 `process.exit(1)`，副本 `throw`）。
+   * 与 `src/cli/cli.mjs` 中 `readPrivateKeyFile()` 的产品实现语义相反（产品失败时 `process.exit(1)`，副本 `throw`）。
    *
    * 处置：走 brief A5 的「删除 + 登记替代覆盖」分支 —— 产品实现是 CLI 模块内**未导出**的私有函数
-   * （`grep` 实测：`:54` 定义 / `:242` 调用 / 无 `export`），测试无法 import 真实实现；
+   * （`grep` 实测：`readPrivateKeyFile()` 定义处无 `export`；调用点在 `src/cli/cli.mjs` 的 `main()`），测试无法 import 真实实现；
    * 且其进程退出语义不可在进程内安全断言。
    *
    * 替代覆盖：改为断言**导出的真实 CLI 映射实现** `applyCliOptions` / `validateStartupConfig` 的行为，
