@@ -491,7 +491,9 @@ SSH2Proxy支持使用私钥进行SSH认证，有两种方式：
 
 ### `auth.enabled` 的语义
 
-`auth.enabled` 默认 `false`，含义是 SOCKS5 服务端与客户端**协商出「无认证」方法**，即匿名入站；这**不是**「认证成功」，该模式下不校验任何凭据。`auth.enabled: true` 时 SOCKS5 侧只接受 RFC1929 用户名/口令方法，HTTP/HTTPS(CONNECT) 侧在无凭据时回 `407`（`src/core/socks-proxy.mjs:189-207`、`src/app.mjs:399-431`）。
+`auth.enabled` 默认 `false`，含义是 SOCKS5 服务端与客户端**协商出「无认证」方法**，即匿名入站；这**不是**「认证成功」，该模式下不校验任何凭据。`auth.enabled: true` 时 SOCKS5 侧只接受 RFC1929 用户名/口令方法，HTTP/HTTPS(CONNECT) 侧在无凭据时回 `407`（方法协商与 `handleAuth` / `handleConnect` 分派在 `src/core/socks-proxy.mjs` 的 `Socks5Proxy#handleRequest()`；HTTP 面的 `407` —— CONNECT 分支与普通请求分支各一处 —— 由 `ProxyServer#createHttpProxyServer()` 下发）。
+
+> 此处**故意不写行号**：行号会随代码移动而漂移，故本文档只引用文件与符号。
 
 有效凭据的判据是**用户名与口令均非空**。若 `auth.enabled: true` 而其中任意一项为空，实现按 fail-closed 处理：拒绝一切认证尝试（回 `01 01` 并断开），并在构造期打印告警。SOCKS5 侧与 HTTP Basic 侧的凭据比较均为恒定时间。
 

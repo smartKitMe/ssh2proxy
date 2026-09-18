@@ -489,7 +489,9 @@ SSH2Proxy supports SSH authentication with private keys in two ways:
 
 ### `auth.enabled` semantics
 
-`auth.enabled` defaults to `false`, and that means the SOCKS5 server **negotiates the "no authentication" method** with the client — an anonymous inbound connection. It is not an authentication success and no credential is checked in that mode. With `auth.enabled: true` the SOCKS5 server only accepts the RFC1929 username/password method and the HTTP/HTTPS(CONNECT) side answers `407` when no credentials are presented (`src/core/socks-proxy.mjs:189-207`, `src/app.mjs:399-431`).
+`auth.enabled` defaults to `false`, and that means the SOCKS5 server **negotiates the "no authentication" method** with the client — an anonymous inbound connection. It is not an authentication success and no credential is checked in that mode. With `auth.enabled: true` the SOCKS5 server only accepts the RFC1929 username/password method and the HTTP/HTTPS(CONNECT) side answers `407` when no credentials are presented (method negotiation and the `handleAuth` / `handleConnect` dispatch live in `src/core/socks-proxy.mjs`'s `Socks5Proxy#handleRequest()`; the HTTP-side `407` — one for the CONNECT branch, one for the plain-request branch — is issued by `ProxyServer#createHttpProxyServer()`).
+
+> Line numbers are deliberately not cited here: they drift as code moves, so this document refers to files and symbols only.
 
 Credentials count as valid only when **both** the username and the password are non-empty. If `auth.enabled: true` is set while either of them is empty, the implementation is fail-closed: every authentication attempt is rejected (`01 01` plus connection close) and a warning is printed at construction time. Comparisons are constant-time on both the SOCKS5 side and the HTTP Basic side.
 
