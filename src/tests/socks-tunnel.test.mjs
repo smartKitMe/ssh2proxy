@@ -71,8 +71,8 @@ describe('Socks5Tunnel', () => {
     expect(tunnel.config).to.equal(config);
     expect(tunnel.retryCount).to.equal(0);
     // A8（D-124）：实现真值是「构造后 isConnected === false」
-    // （`socks-tunnel.mjs:829` 构造置 false；`:870` connect() 成功后才置 true；`:945` close() 置回 false），
-    // 与 `ssh-tunnel.mjs:16/62/171` 同构 ⇒ 断言 false 与实现一致。
+    // （`Socks5Tunnel#constructor` 构造置 false；`Socks5Tunnel#connect()` 成功后才置 true；`Socks5Tunnel#close()` 置回 false），
+    // 与 `SSHTunnel` 的 `isConnected` 字段（构造 / `connect()` / `close()` 三处语义）同构 ⇒ 断言 false 与实现一致。
     expect(tunnel.isConnected).to.be.false;
     tunnel.close();
   });

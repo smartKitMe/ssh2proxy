@@ -1,7 +1,8 @@
 import { Worker, isMainThread, parentPort, threadId } from 'worker_threads';
 
 /**
- * Worker 池（`node:worker_threads`）——把 README:18 / CLAUDE.md:44 声称的 Multi-threading
+ * Worker 池（`node:worker_threads`）——把 README:18 / CLAUDE.md「Architecture Overview」中
+ * `WorkerManager` 条目声称的 Multi-threading
  * 兑现为真实实现：真实容量、非固定 workers[0] 的分发、队列与背压、错误传播与崩溃补位、
  * `getStats()` 可观测、无 worker 时同一 handler 表的主线程降级执行。
  *
