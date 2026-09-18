@@ -67,7 +67,7 @@ function stubOutCreateTunnel(pool) {
   return created;
 }
 
-/** 本地 echo：记录上游实收的请求行与 Host，并在响应体中回显路径，供断言真实透传。 */
+/** 本地 echo：记录上游实收的请求行与 Host，并在响应体中回显路径，供断言上游响应体确实到达客户端。 */
 function startEchoServer() {
   const received = [];
   const server = http.createServer((req, res) => {
@@ -96,10 +96,15 @@ function freeLoopbackPort() {
 /**
  * 经代理端口发一次普通 HTTP 代理请求。
  *
- * 必须用**裸 TCP** 而不是 `http.request`：本产品在 HTTP 转发路径上是**透传**语义
- * （`stream.pipe(res)` 把上游响应原样灌回），因此客户端收到的是「上游原始响应字节」，
- * 用 `http.request` 会让 Node 把上游响应再包一层 chunked 解析，观测不到真实链路。
- * 裸 TCP 读回的字节才能直接断言「上游响应体确实透传回来了」。
+ * 必须用**裸 TCP** 而不是 `http.request`：产品在 HTTP 转发路径上用 `stream.pipe(res)`
+ * （`src/app.mjs` 的 `handleHttpRequest()` 内）把**上游整条原始响应字节**（含上游状态行、头与 chunked 分帧）
+ * 当作 **body** 灌进客户端的 `http.ServerResponse` ⇒ 客户端读到的是「响应套响应」：
+ * 外层是 Node 生成的状态行 + `Transfer-Encoding: chunked`，body 里再嵌一条完整的上游响应
+ * （本席独立复跑：`STATUS_LINE_COUNT=2`、`HAS_CHUNKED=true`，`http.request` 的 body 以上游状态行开头）。
+ *
+ * 故这里**不是**「逐字节透传」：上游响应体（echo 的 `ECHO_FROM_UPSTREAM <path>`）确实到达了客户端，
+ * 但它被**包在外层 HTTP 响应与 chunked 分帧之内**。用 `http.request` 只会再多包一层 chunked 解析，
+ * 观测不到链路的原始字节形态；裸 TCP 读回的字节才能直接断言「上游响应体确实到得了客户端」。
  */
 function rawProxyGet(proxyPort, absoluteUrl, hostHeader, timeoutMs = 3000) {
   return new Promise((resolve, reject) => {

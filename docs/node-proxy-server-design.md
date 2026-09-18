@@ -336,12 +336,15 @@ SSH 连接状态另有出口：`ProxyServer.getStatus()`（`/api/status` 的数�
 
 ### 7.1 单元测试
 - SOCKS5 隧道与连接池：`Socks5Tunnel` 的 `connect()`/`forwardOut()`/`getPoolStats()`/`close()` 契约（`src/tests/socks-tunnel.test.mjs`，建连经 `poolConfig.createConnection` 注入 stub）
-- 负载均衡连接池：`acquire()`/`release()` 记账、`maxSize` 上限与 `POOL_AT_CAPACITY`、`connectionCount` 最少连接、`close()` 关闭态与 `POOL_CLOSED`（`src/tests/load-balanced-connection-pool.test.mjs`）
-- HTTP 代理与配置：请求行/`Host` 构造契约、`mergeConfig`、`validateConfig`、`applyCliOptions` 选项→配置键映射与非法端口拒绝（`src/tests/proxy.test.mjs`）
+- 负载均衡连接池（`src/tests/load-balanced-connection-pool.test.mjs`）：`acquire()`/`release()` 记账、`maxSize` 上限与 `POOL_AT_CAPACITY`、`connectionCount` 最少连接、`close()` 关闭态
+- 关闭态拒绝语义 `POOL_CLOSED`：**只由** `src/tests/socks-tunnel.test.mjs` 断言（用例名 `should reject with POOL_CLOSED after close`）；`src/tests/load-balanced-connection-pool.test.mjs` 内**零命中**（该文件的关闭态用例断言的是池状态对象的关闭标志，与 `POOL_CLOSED` 无关）
+- HTTP 代理与配置（`src/tests/proxy.test.mjs`）：`mergeConfig`、`validateConfig`、`applyCliOptions` 选项→配置键映射与非法端口拒绝、`ProxyServer` 构造与 `start`/`stop` 可调用性
+- 请求行与 Host 构造契约：`buildForwardRequest` **只由** `src/tests/integration/socks5-tunnel.integration.test.mjs` 覆盖（用例名 `should build request line and Host per the frozen D-138 contract`）；`src/tests/proxy.test.mjs` 内**零命中**
 - PAC 文件生成：默认内容与按名装载、未命中 404 语义
 
 ### 7.2 集成测试
-- `src/tests/integration/socks5-tunnel.integration.test.mjs`：真实 `ProxyServer` + 真实 HTTP 处理链 + 本地上游的真实 TCP 往返（请求行与 `Host` 校验、上游响应透传）
+- `src/tests/integration/socks5-tunnel.integration.test.mjs`：真实 `ProxyServer` + 真实 HTTP 处理链 + 本地上游的真实 TCP 往返（请求行与 `Host` 校验、上游原始响应经 `stream.pipe(res)` 转发）
+- **★ 普通 HTTP 转发的响应语义（实测口径，调用方须知）**：`src/app.mjs#handleHttpRequest()` 用 `stream.pipe(res)` 把**上游整条原始响应字节**（含上游状态行、头与 chunked 分帧）当作 **body** 灌入 `http.ServerResponse`。因此客户端读到的是「**响应套响应**」：外层是 Node 自己生成的状态行与 `Transfer-Encoding: chunked`，body 里再嵌一条完整的上游响应（实测 `STATUS_LINE_COUNT=2`、`HAS_CHUNKED=true`，且 `http` 客户端解析出的 body 以上游状态行 `HTTP/1.1 200 OK` 开头）。**该行为不是逐字节透传，也不是 `http` 模块级的响应重组**：按原始字节解析的客户端（浏览器 / `curl`）可正常工作，而按 HTTP 报文解析的客户端会看到嵌套响应。测试因此用**裸 TCP** 观测链路（`http.request` 会再多包一层 chunked 解析）
 - 真实连接池 `acquire()`/`release()` 记账与 `forwardOut()` 目标正确性
 - **负向对照**：上游不可达时必须失败并上抛错误，不得静默返回 200
 - **覆盖边界（诚实声明）**：集成测试在 `connectionPool.createTunnel` 注入 stub 隧道（`src/tests/integration/socks5-tunnel.integration.test.mjs`），只替换「建连 + forwardOut 的传输层」，**真实 SSH 握手不在覆盖范围内**；仓库内 `mock-ssh-server.mjs` 无法完成 ssh2 握手，未被任何测试使用；`supertest` 不是依赖也不被使用

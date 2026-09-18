@@ -82,8 +82,10 @@ export { parseBasicCredentials };
  * （已由回环 echo 探针复现：客户端请求 `/echo-path?x=1`，上游实收 `GET /`）。此处 MUST 用 `pathname + search`。
  *
  * 其二：Host 头 MUST 指向「上游目标 host[:port]」——虚主机（vhost）路由依赖它；端口为协议默认值时不重复写入。
- * 注意 `urlObject.port` 是**字符串**，不可与数字 80/443 直接比较（历史实现 `targetPort !== 80 && targetPort !== 443`
- * 会把显式 `:80`/`:443` 误判为非默认端口而写出冗余端口）。
+ * `urlObject.port` 的类型是**字符串**（显式非默认端口如 `'8080'`），故本函数把默认端口也写成字符串
+ * （`'80'`/`'443'`）再比较，不让字符串与数字混比。另：WHATWG `URL` 已把**协议默认端口归一为空串**
+ * （实测 `new URL('http://h.example:80/p').port === ''`），故 `urlObject.port || defaultPort` 只在
+ * **显式非默认端口**时取到端口；默认端口落到 `defaultPort` ⇒ `port === defaultPort` ⇒ Host 内不重复写端口。
  *
  * @param {URL} urlObject - 已解析的目标 URL
  * @param {string} method - 请求方法
