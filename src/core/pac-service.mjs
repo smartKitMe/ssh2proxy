@@ -6,7 +6,7 @@ const PAC_CONTENT_TYPE = 'application/x-ns-proxy-autoconfig';
 /**
  * PAC 服务：默认 PAC 内容 + 多 PAC 文件按名装载（D-015/D-105）
  *
- * 多 PAC 入口键（MUST 与 known_issues.md 一致）：
+ * 多 PAC 入口键（键名与默认值以 `src/config/default.config.mjs` 的 `pac` 段为准）：
  *   ① `config.pac.files`：`{ '<请求名>': '<文件路径>' }` 显式映射；
  *   ② `config.pac.directory`：目录 + 请求名拼路径（含路径穿越防护）；
  *   ③ `config.pac.filePath`：单文件兼容（请求名等于其 basename 时命中）；指向目录时按 ② 处理。

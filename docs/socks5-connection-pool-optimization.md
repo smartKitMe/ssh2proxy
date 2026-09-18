@@ -372,7 +372,7 @@ console.log(stats.connectionHits, stats.connectionMisses, stats.avgWaitTime);
 3. 添加基础测试用例（`src/tests/socks-tunnel.test.mjs`）
 
 ### 第二阶段：高级特性 —— 已完成
-1. 实现连接健康检查（`startHealthCheck()` / `checkIdleConnections()`）
+1. 实现连接健康检查（`startHealthCheck()` / `runHealthCheck()`）
 2. 添加性能监控（`getStats()`）
 3. 实现动态配置调整（`adjustPoolSize()`）
 
@@ -398,12 +398,12 @@ const poolStats = {
 };
 ```
 
-完整键集另含 `waits`、`waitedRequests`、`totalWaitTime`、`prewarmed`、`retries`、`retryDelays`、`failovers`、`failures`、`healthChecks`、`healthCheckRemovals`、`dynamicAdjustments`、`idleReaped`、`releases`、`maxConnections`、`minConnections`、`maxConnectionsLimit`、`idleTimeout`、`connectionTimeout`、`healthCheckInterval`、`retryAttempts`、`retryDelay`、`closed`。
+完整键集另含 `waits`、`waitedRequests`、`totalWaitTime`、`prewarmed`、`retries`、`retryDelays`、`failovers`、`failures`、`healthChecks`、`healthCheckRemovals`、`dynamicAdjustments`、`idleReaped`、`releases`、`lateDiscarded`、`maxConnections`、`minConnections`、`maxConnectionsLimit`、`idleTimeout`、`connectionTimeout`、`healthCheckInterval`、`retryAttempts`、`retryDelay`、`closed`。**合计 30 个键**，即 `getPoolStats()` 的完整键集。
 
 ### 调试工具
 
 - 连接池状态查询：`tunnel.getPoolStats()`（对等 `connectionPool.getStats()`）与 `tunnel.adjustPoolSize()`
-- 日志：建连/调整/关闭等关键路径输出到控制台，`-v/--verbose` 时为 debug 级
+- 日志：池的关键路径（建连/重试/动态调整/关闭等）直接输出到控制台 —— `src/core/socks-tunnel.mjs` 当前**未引用** `verbose` 或 logger 抽象（实测：`verbose` 0 处、`logger` 0 处、无条件 `console.*` 26 处），因此 `-v/--verbose` **不会**改变该文件的日志详细程度
 - **未实现项**：不存在「性能分析报告」生成器（设计草案中的该项未落地，不作为声称）
 
 ## 总结
@@ -418,7 +418,7 @@ SOCKS5 连接池通过连接复用降低了建连开销与资源占用，保持�
 | 复用优先 / 未命中建连 | `getConnection()` / `createWithReservation()` / `createNewConnection()` | 已落地 |
 | 等待队列与超时 | `waitForConnection()`（`waitTimeout` 默认 10000） | 已落地 |
 | 空闲回收 | `reapIdleConnections()`（`cleanupInterval` 默认 10000） | 已落地 |
-| 健康检查 | `startHealthCheck()` / `checkIdleConnections()`（属性判定 + 周期剔除） | 已落地（无主动 SOCKS5 探针握手） |
+| 健康检查 | `startHealthCheck()` / `runHealthCheck()`（属性判定 + 周期剔除） | 已落地（无主动 SOCKS5 探针握手） |
 | 预热 | `prewarmPool()`（按 `prewarmTargets`） | 已落地 |
 | 动态调整 | `adjustPoolSize()`（±1，上下限可配） | 已落地 |
 | 故障转移 | `createNewConnection()` 的 `fallbackHost`/`fallbackPort` 分支 | 已落地 |

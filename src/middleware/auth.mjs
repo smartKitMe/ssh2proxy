@@ -3,11 +3,10 @@ import crypto from 'crypto';
 /**
  * AuthMiddleware · HTTP 基本认证与管理端点凭证
  *
- * C3-07 接线状态登记（逐项处置见 handoff/known_issues.md §5）。
- * 未接线项的接线点在 `src/app.mjs`（C3 的禁区，不得越界改动）：
- *   - `basicAuth`                 → 已由 C4 接线（审查门 F6 裁定；接线点 app.mjs 的 HTTP 挂载链）
- *   - `generateAdminCredentials`  → **已接线**（C4 完成）：app.mjs:76、app.mjs:372 已真实调用
- *   - `generateRandomPassword`    → **已接线**：本文件 `generateAdminCredentials` 内部消费者
+ * 接线状态（逐项实测）：
+ *   - `basicAuth`                 → 已接线：`src/app.mjs` 的 HTTP 挂载链（代理认证中间件）
+ *   - `generateAdminCredentials`  → 已接线：`ProxyServer#getAdminCredentials()`（`src/app.mjs`）真实调用
+ *   - `generateRandomPassword`    → 已接线：本文件 `generateAdminCredentials` 内部消费者
  *
  * F10（2026-09-16 复审）：凭据比较改为**恒定时间**（HMAC-SHA256 归一 + `crypto.timingSafeEqual`），
  * 与 SOCKS5 侧同一口径；并修复「口令含 ':' 被截断」与「空配置凭据 fail-open」两处同类缺陷。

@@ -257,8 +257,8 @@ process.on('SIGINT', async () => {
 
 校验把配置问题分成两类，只有一类是致命的：
 
-- **端口值**超出 `0..65535` 属致命错误，fail-fast：CLI 在服务启动前拒绝（退出码 `1`），`ProxyServer` 构造期抛错。
-- **SSH 凭证缺失**（host/username/password/私钥均无）**不致命**：实现只打印告警（`console.warn`）后继续，因为「只启动 PAC 服务」或「只启动管理端点」是受支持的用法；`default.config.mjs` 本身也是无凭证的。
+- **端口值**超出 `0..65535` 属致命错误，fail-fast：CLI 在服务启动前拒绝（退出码 `1`），`ProxyServer` 构造期抛错。当前 `validateConfig()` 只校验两个端口 —— `proxy.httpPort` 与 `proxy.socksPort`；`proxy.httpsPort`、`proxy.pacPort`、`proxy.adminPort` **不在该校验器覆盖范围内**。
+- **SSH 凭证缺失**（无 password 且无私钥）**不致命**：实现只打印告警（`console.warn`）后继续，因为「只启动 PAC 服务」或「只启动管理端点」是受支持的用法。默认配置本身带 `ssh.host: 'localhost'` 与 `ssh.username: 'user'`，而 `ssh.password` 与 `ssh.privateKey` 为空 —— 这正是默认启动会触凭证告警的原因。
 
 也就是说，「配置非法就退出」只对端口这一类成立，其余校验信息都是告警。
 
@@ -269,20 +269,21 @@ SSH2Proxy现在支持负载均衡连接池，允许多个连接共享同一个SS
 ### 配置项说明
 
 - `maxConnectionsPerTunnel`: 每个SSH隧道最大连接数，默认为10
-- `loadBalancingStrategy`: 负载均衡策略，默认为"least-connections"（使用率最低优先）
+- `loadBalancingStrategy`: 负载均衡策略 —— `least-connections`（默认）比较 `connectionCount`，平手按 `lastUsed`；`round-robin` 在合格隧道间按游标轮转；未识别的取值回落 `least-connections`
 
 ### 工作原理
 
 1. 每个SSH隧道可以被多个连接共享，而不是每个连接都创建一个新的SSH隧道
-2. 请求隧道分配时，池在「未达 `maxConnectionsPerTunnel`」的隧道之间比较 `connectionCount` 并选取最小者；相同负载时以 `lastUsed` 作为次序（最早使用优先）（`src/core/load-balanced-connection-pool.mjs:219-227`）
+2. 请求隧道分配时，池按 `loadBalancingStrategy` 分派：默认的 `least-connections` 在「未达 `maxConnectionsPerTunnel`」的隧道之间比较 `connectionCount` 并选取最小者（平手按 `lastUsed`）；`round-robin` 则在合格隧道间按游标轮转（`selectLeastLoadedTunnel()`，`src/core/load-balanced-connection-pool.mjs`）
 3. 如果所有隧道都达到每隧道连接阈值且池未达 `maxSize`，则异步创建新隧道，当前请求等待该隧道就绪
 4. 如果 `maxSize` 也已达到，请求进入等待队列（不静默超限）；超过 `acquireTimeout` 后以 `error.code === 'POOL_AT_CAPACITY'` 拒绝
 
 ### 状态与关闭语义
 
-- `getStatus()` 返回 `{ available, used, total, maxSize, minSize, maxConnectionsPerTunnel, loadBalancingStrategy, waiting, closed, usedDetails, stats }`，其中 `usedDetails` 携带每条隧道的 `connectionCount`（`src/core/load-balanced-connection-pool.mjs:509-525`）。
-- `close()` 之后池进入**粘性关闭态**（`closed === true`，不再复位）。**已明确封堵**并以 `error.code === 'POOL_CLOSED'` 拒绝的路径有四条：被 `close()` 唤醒的排队者、`acquire()` 的新建分支（`await createTunnel()` 之后校验）、自动扩容回调（`await createTunnel()` 之后校验）、`initialize()` 入口。关闭态下 `release()` 不再回填池，`close()` 幂等。
-- **上述保证不覆盖的边界**（不要读成「关闭后一切都拒绝」）：`close()` 时**已在途**的建连无法取消，其 socket 仍可能返回给调用方，而池本身保持为空（`createdTunnels` 继续计数；被销毁的隧道对象计入 `stats.closingDiscarded`）。绕过 `acquire()` / `initialize()` 直接调用内部方法（`createTunnel()` / `attach()` / `dispatchTunnel()` / `scheduleExpansion()`）属未定义行为，不受 `closed` 标志保护。
+- `getStatus()` 返回 `{ available, used, total, maxSize, minSize, maxConnectionsPerTunnel, loadBalancingStrategy, waiting, closed, usedDetails, stats }`，其中 `usedDetails` 携带每条隧道的 `connectionCount`（`src/core/load-balanced-connection-pool.mjs` 的 `getStatus()`）。
+- `close()` 之后池进入**粘性关闭态**（`closed === true`，不再复位）。**真正抛 `error.code === 'POOL_CLOSED'` 的只有三条路径**：被 `close()` 唤醒的排队者、`acquire()` 的新建分支（`await createTunnel()` 之后校验）、`initialize()` 入口（`throwIfClosed()`）。**自动扩容回调不抛**：`await createTunnel()` 之后若已关闭，它把新隧道对象丢弃并直接返回，隧道不会入池。关闭态下 `release()` 不再回填池，`close()` 幂等。
+- **在途建连也已封堵**：`close()` 之后才建成的 socket 会被销毁、计入 `stats.lateDiscarded`，并以 `POOL_CLOSED` 拒绝，不再返回给调用方（`createNewConnection()` 主分支与故障转移分支同形处理，`src/core/socks-tunnel.mjs`）。
+- 另需注意：绕过 `acquire()` / `initialize()` 直接调用内部方法（`createTunnel()` / `attach()` / `dispatchTunnel()` / `scheduleExpansion()`）属未定义行为，不受 `closed` 标志保护。
 
 ### 性能说明
 
@@ -363,7 +364,7 @@ SSH2Proxy 实现了 SOCKS5 连接池，通过连接复用降低 SOCKS5 隧道的
 2. `upstreamSocks5.pool` —— 规范位置；
 3. `pool` —— 历史读取点，保留兼容。
 
-之所以别名优先：默认值合并后 `upstreamSocks5.pool` 永远存在，若规范键优先则别名将永久不可达。合并点是导出的 `resolveSocks5PoolConfig()`，它按上述顺序压入三个来源并自低向高合并（`src/core/socks-tunnel.mjs:39-56`），隧道与池在 `src/core/socks-tunnel.mjs:832` 处用解析结果构造。
+之所以别名优先：默认值合并后 `upstreamSocks5.pool` 永远存在，若规范键优先则别名将永久不可达。合并点是导出的 `resolveSocks5PoolConfig()`，它按上述顺序压入三个来源并自低向高合并；`Socks5Tunnel` 把解析结果存入 `this.poolConfig` 并交给 `new Socks5ConnectionPool(config, poolConfig)`（`src/core/socks-tunnel.mjs`）。
 
 池段可用键（默认值取自 `src/config/default.config.mjs`）：`maxConnections` `10`、`idleTimeout` `30000`、`connectionTimeout` `10000`、`healthCheckInterval` `60000`、`waitTimeout` `10000`、`cleanupInterval` `10000`、`minConnections` `1`、`maxConnectionsLimit` `0`（`0` 表示 `maxConnections * 4`）、`prewarm` `false`、`prewarmCount` `1`、`prewarmTargets` `[]`、`retryBackoffFactor` `2`、`retryMaxDelay` `30000`、`fallbackHost` `''`、`fallbackPort` `0`。
 
@@ -394,7 +395,9 @@ SSH2Proxy 实现了 SOCKS5 连接池，通过连接复用降低 SOCKS5 隧道的
 - `pendingRequests` - 等待请求数
 - `connectionHits` - 连接复用次数
 - `connectionMisses` - 新建连接次数
-- `avgWaitTime` - 平均等待时间
+- `avgWaitTime` - 平均等待时间 = `totalWaitTime / waitedRequests`（未发生排队时为 `0`）
+
+`Socks5Tunnel#getPoolStats()` 还会返回：`waits`、`waitedRequests`、`totalWaitTime`、`prewarmed`、`retries`、`retryDelays`、`failovers`、`failures`、`healthChecks`、`healthCheckRemovals`、`dynamicAdjustments`、`idleReaped`、`releases`、`lateDiscarded`（关闭后在途建连被销毁的计数）、`maxConnections`、`minConnections`、`maxConnectionsLimit`、`idleTimeout`、`connectionTimeout`、`healthCheckInterval`、`retryAttempts`、`retryDelay`、`closed`。**合计 30 个键**，即 `getPoolStats()` 的完整键集。
 
 ## PAC文件服务
 
@@ -432,7 +435,7 @@ npx ssh2proxy --pac-file-path ./proxy.pac.js --pac-port 8013
 - `pac.directory`：从该目录按请求名装载（已做路径穿越防护）；
 - `pac.filePath` 仍作为单文件兼容入口（请求名等于其 basename 时命中）；`pac.filePath` 指向目录时按 `pac.directory` 处理。
 
-解析在 `PacService#resolvePacFile()`（`src/core/pac-service.mjs:28-83`）。**未命中任何来源时返回 404 `PAC file not found`**，绝不会用默认内容冒充命中（`src/core/pac-service.mjs:149-155`）。
+解析在 `PacService#resolvePacFile()`。**未命中任何来源时返回 404 `PAC file not found`**，绝不会用默认内容冒充命中（`handleRequest()`，`src/core/pac-service.mjs`）。
 
 ### PAC文件访问路径
 
@@ -445,7 +448,7 @@ npx ssh2proxy --pac-file-path ./proxy.pac.js --pac-port 8013
 - `http://localhost:8013/proxy.pac`
 - `http://192.168.1.100:8013/proxy.pac`
 
-生成的 PAC 内容中的代理串取自 `proxy.socksPort` 而非硬编码端口：`pac.defaultProxy` 里的回环端口会被归一化为真实监听的 SOCKS5 端口（`src/core/pac-service.mjs:119-138`）。当 PAC 渲染热路径由 worker 池承载时，池对未装载的名字返回 `null`（绝不伪造 PAC），请求回落到上述服务并同样得到 404（`src/core/worker-manager.mjs:99-118`）。
+端口与内容是**单一真源**：`PacService#generateDefaultProxyString()` 负责生成代理串（替换 `{socksPort}` / `{httpPort}` / `{host}` 占位符，并把 `pac.defaultProxy` 里历史遗留的 `127.0.0.1:<端口>` 归一化为真实的 `proxy.socksPort`）。主线程经 `generatePacContent()` 取用，worker 热路径经 `PacService#resolvePacRender()` 取用并作为 payload 下发（`renderPacViaWorker()`，`src/app.mjs`）；**worker 不再自行推断端口**——payload 既无 `content`/`raw` 又无配置派生的 `renderProxy` 时 `renderPac()` 直接抛错，不再静默回落 1080（`src/core/worker-manager.mjs`）。按名未装载时 `resolvePacRender()` 返回 `null`，请求回落到主线程处理器并同样得到 404。
 
 ### PAC文件示例
 

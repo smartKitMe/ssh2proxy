@@ -100,7 +100,7 @@ class ProxyServer {
     // 日志级别：config.logging.level 优先，其次 -v/--verbose（debug），缺省 info
     // （消费 C3 冻结的 LoggerMiddleware level 注入契约；旧版中间件忽略该参数，行为退化为 info）
     this.loggerMiddleware = new LoggerMiddleware({ level: this.resolveLogLevel() });
-    // 限流阈值来自 config.rateLimit（键定义见 known_issues：待 C2 合并后落地 default.config.mjs）
+    // 限流阈值来自 config.rateLimit（键与默认值见 src/config/default.config.mjs 的 rateLimit 段）
     this.rateLimitMiddleware = new RateLimitMiddleware(config.rateLimit || {});
 
     // 初始化各代理组件
@@ -137,7 +137,8 @@ class ProxyServer {
   /**
    * 构造期配置校验（RD-12 接线点：validateConfig 的真实消费者之一）
    * 端口一类的非法值属致命错误 → fail-fast；其余（如 SSH 凭据缺失）按告警处理
-   * （默认配置本身即无凭据，硬退会让「仅启动 PAC/管理端点」的合法用法不可用，见 known_issues）
+   * （默认配置本身只有 host/username 而无口令，硬退会让「仅启动 PAC/管理端点」的合法用法不可用，
+   * 见 README-zh「### 配置校验」/ README「### Configuration validation」）
    * @returns {string[]} 校验错误列表
    */
   assertStartableConfig() {

@@ -257,8 +257,8 @@ Configuration files use JSON. Detailed options:
 
 Validation splits configuration problems into two classes, and only one of them is fatal:
 
-- **Port values** outside `0..65535` are fatal and fail fast: the CLI rejects them before the server starts (exit code `1`), and `ProxyServer` throws from its constructor.
-- **Missing SSH credentials** (no host/username/password/private key) are **not** fatal: the implementation prints a warning (`console.warn`) and continues, because running only the PAC service or only the admin endpoints is a supported configuration. `default.config.mjs` itself ships without credentials.
+- **Port values** outside `0..65535` are fatal and fail fast: the CLI rejects them before the server starts (exit code `1`), and `ProxyServer` throws from its constructor. `validateConfig()` currently checks exactly two ports — `proxy.httpPort` and `proxy.socksPort`; `proxy.httpsPort`, `proxy.pacPort` and `proxy.adminPort` are **not** covered by that validator.
+- **Missing SSH credentials** (no password and no private key) are **not** fatal: the implementation prints a warning (`console.warn`) and continues, because running only the PAC service or only the admin endpoints is a supported configuration. The shipped defaults carry `ssh.host: 'localhost'` and `ssh.username: 'user'`, while `ssh.password` and `ssh.privateKey` are empty — which is exactly why the credential warning fires on a default run.
 
 So "the process exits on invalid configuration" is only true for the port class; every other validation message is a warning.
 
@@ -269,20 +269,21 @@ SSH2Proxy supports a load-balanced connection pool that allows multiple connecti
 ### Configuration Options
 
 - `maxConnectionsPerTunnel`: Maximum connections per SSH tunnel (default: 10)
-- `loadBalancingStrategy`: Load balancing strategy (default: `least-connections`)
+- `loadBalancingStrategy`: Load balancing strategy — `least-connections` (default) compares `connectionCount` with `lastUsed` as tie-breaker; `round-robin` rotates over the eligible tunnels with a cursor; any unrecognised value falls back to `least-connections`
 
 ### How It Works
 
 1. Each SSH tunnel can be shared by multiple connections, rather than creating a new tunnel per connection
-2. When allocating a tunnel, the pool compares `connectionCount` between the tunnels that are still below `maxConnectionsPerTunnel` and picks the lowest one; `lastUsed` breaks ties, so equal-load tunnels are used in oldest-first order (`src/core/load-balanced-connection-pool.mjs:219-227`)
+2. When allocating a tunnel, the pool dispatches on `loadBalancingStrategy`: the default `least-connections` compares `connectionCount` between the tunnels that are still below `maxConnectionsPerTunnel` and picks the lowest one (`lastUsed` breaks ties), while `round-robin` walks the eligible tunnels with a cursor (`selectLeastLoadedTunnel()` in `src/core/load-balanced-connection-pool.mjs`)
 3. If every tunnel is at the per-tunnel threshold and the pool is below `maxSize`, a new tunnel is created asynchronously and the request waits for it
 4. If `maxSize` is also reached, the request is queued instead of silently overloading a tunnel; after `acquireTimeout` it is rejected with `error.code === 'POOL_AT_CAPACITY'`
 
 ### Status and shutdown semantics
 
-- `getStatus()` returns `{ available, used, total, maxSize, minSize, maxConnectionsPerTunnel, loadBalancingStrategy, waiting, closed, usedDetails, stats }`, where `usedDetails` carries the per-tunnel `connectionCount` (`src/core/load-balanced-connection-pool.mjs:509-525`).
-- After `close()` the pool is **stickily closed** (`closed === true`, never reset). The paths that are explicitly blocked and rejected with `error.code === 'POOL_CLOSED'` are: queued waiters woken by `close()`, the `acquire()` create branch (checked after `await createTunnel()`), the automatic expansion callback (checked after `await createTunnel()`), and the `initialize()` entry point. `release()` no longer returns connections to the pool while closed, and `close()` is idempotent.
-- Boundaries that are **not** covered by that guarantee — do not read the above as "everything is rejected after close": a connection attempt already in flight when `close()` runs is not cancelled, so its socket may still be returned to the caller while the pool itself stays empty (`createdTunnels` keeps counting; `stats.closingDiscarded` counts discarded tunnel objects). Calling the internal methods `createTunnel()` / `attach()` / `dispatchTunnel()` / `scheduleExpansion()` directly instead of going through `acquire()` / `initialize()` is undefined behaviour and is not protected by the closed flag.
+- `getStatus()` returns `{ available, used, total, maxSize, minSize, maxConnectionsPerTunnel, loadBalancingStrategy, waiting, closed, usedDetails, stats }`, where `usedDetails` carries the per-tunnel `connectionCount` (`getStatus()` in `src/core/load-balanced-connection-pool.mjs`).
+- After `close()` the pool is **stickily closed** (`closed === true`, never reset). The paths that actually throw `error.code === 'POOL_CLOSED'` are exactly three: queued waiters woken by `close()`, the `acquire()` create branch (checked after `await createTunnel()`), and the `initialize()` entry point (`throwIfClosed()`). The **automatic expansion callback does not throw**: it discards the freshly created tunnel object (after `await createTunnel()`, when `closed` is set) and returns, so the tunnel is never attached to the pool. `release()` no longer returns connections to the pool while closed, and `close()` is idempotent.
+- In-flight connections are covered too: a socket that finishes connecting after `close()` is destroyed, counted in `stats.lateDiscarded`, and rejected with `POOL_CLOSED` instead of being handed to the caller (`createNewConnection()` in `src/core/socks-tunnel.mjs`, both the primary and the fallback branch).
+- Beyond that, calling the internal methods `createTunnel()` / `attach()` / `dispatchTunnel()` / `scheduleExpansion()` directly instead of going through `acquire()` / `initialize()` is undefined behaviour and is not protected by the closed flag.
 
 ### Performance Notes
 
@@ -363,7 +364,7 @@ Add the SOCKS5 pool configuration to your settings:
 2. `upstreamSocks5.pool` — the canonical location;
 3. `pool` — the historical location, kept for compatibility.
 
-The alias wins because `upstreamSocks5.pool` always exists once defaults are merged, so a lower-priority canonical key would make the alias permanently unreachable. The merge point is the exported `resolveSocks5PoolConfig()` helper, which pushes the three sources in that order and merges them low-to-high (`src/core/socks-tunnel.mjs:39-56`); the tunnel and the pool are constructed from the resolved object at `src/core/socks-tunnel.mjs:832`.
+The alias wins because `upstreamSocks5.pool` always exists once defaults are merged, so a lower-priority canonical key would make the alias permanently unreachable. The merge point is the exported `resolveSocks5PoolConfig()` helper, which pushes the three sources in that order and merges them low-to-high; `Socks5Tunnel` keeps the resolved object in `this.poolConfig` and hands it to `new Socks5ConnectionPool(config, poolConfig)` (`src/core/socks-tunnel.mjs`).
 
 Keys available in the pool section (defaults from `src/config/default.config.mjs`): `maxConnections` `10`, `idleTimeout` `30000`, `connectionTimeout` `10000`, `healthCheckInterval` `60000`, `waitTimeout` `10000`, `cleanupInterval` `10000`, `minConnections` `1`, `maxConnectionsLimit` `0` (`0` means `maxConnections * 4`), `prewarm` `false`, `prewarmCount` `1`, `prewarmTargets` `[]`, `retryBackoffFactor` `2`, `retryMaxDelay` `30000`, `fallbackHost` `''`, `fallbackPort` `0`.
 
@@ -396,7 +397,7 @@ This document deliberately publishes **no** percentage or multiplier figures for
 - `connectionMisses` – counter of requests that had to create a connection
 - `avgWaitTime` – `totalWaitTime / waitedRequests`, i.e. the mean queue wait in milliseconds over requests that actually waited; it stays `0` when nothing ever queued
 
-Additional counters and the current limits are returned as well: `waits`, `waitedRequests`, `totalWaitTime`, `prewarmed`, `retries`, `retryDelays`, `failovers`, `failures`, `healthChecks`, `healthCheckRemovals`, `dynamicAdjustments`, `idleReaped`, `releases`, `maxConnections`, `minConnections`, `maxConnectionsLimit`, `idleTimeout`, `connectionTimeout`, `healthCheckInterval`, `retryAttempts`, `retryDelay`, `closed`.
+Additional counters and the current limits are returned as well: `waits`, `waitedRequests`, `totalWaitTime`, `prewarmed`, `retries`, `retryDelays`, `failovers`, `failures`, `healthChecks`, `healthCheckRemovals`, `dynamicAdjustments`, `idleReaped`, `releases`, `lateDiscarded` (sockets discarded because the pool closed while they were connecting), `maxConnections`, `minConnections`, `maxConnectionsLimit`, `idleTimeout`, `connectionTimeout`, `healthCheckInterval`, `retryAttempts`, `retryDelay`, `closed`. That is **30 keys** in total; `getPoolStats()` returns exactly this set.
 
 ## PAC File Service
 
@@ -434,7 +435,7 @@ Besides a single `pac.filePath`, named PAC files are served per request name:
 - `pac.directory`: directory to load `<request name>` from (path traversal is rejected);
 - `pac.filePath` still works as single-file compatibility (a request name equal to its basename hits it), and a `pac.filePath` pointing at a directory is treated as `pac.directory`.
 
-Resolving happens in `PacService#resolvePacFile()` (`src/core/pac-service.mjs:28-83`). A name that matches nothing returns **404 `PAC file not found`** — the default PAC content is never used to fake a hit (`src/core/pac-service.mjs:149-155`).
+Resolving happens in `PacService#resolvePacFile()`. A name that matches nothing returns **404 `PAC file not found`** — the default PAC content is never used to fake a hit (`handleRequest()` in `src/core/pac-service.mjs`).
 
 ### PAC Access Paths
 
@@ -445,7 +446,7 @@ For example, with the default PAC port `8013`:
 - `http://localhost:8013/proxy.pac`
 - `http://192.168.1.100:8013/proxy.pac`
 
-The proxy string inside a generated PAC is built from `proxy.socksPort`, not from a hard-coded port: loopback ports in `pac.defaultProxy` are normalised to the real listening SOCKS5 port (`src/core/pac-service.mjs:119-138`). When the PAC render hot path is served by the worker pool, the pool returns `null` for an unknown name (never a fabricated PAC), so the request falls back to the service above and still gets the 404 (`src/core/worker-manager.mjs:99-118`).
+Port and content have a **single source of truth**: `PacService#generateDefaultProxyString()` builds the proxy string, replacing `{socksPort}` / `{httpPort}` / `{host}` placeholders and normalising any historical `127.0.0.1:<port>` in `pac.defaultProxy` to the real `proxy.socksPort`. Both content paths use it — the main thread through `generatePacContent()`, and the worker hot path through `PacService#resolvePacRender()`, whose result is what the worker payload carries (`renderPacViaWorker()` in `src/app.mjs`). The worker does **not** infer proxy ports itself any more; if the payload carries neither `content`/`raw` nor a config-derived `renderProxy`, `renderPac()` throws instead of silently falling back to port 1080 (`src/core/worker-manager.mjs`). When a name is not loaded, `resolvePacRender()` returns `null`, the request falls through to the main-thread handler and still gets the 404.
 
 ### PAC Example
 

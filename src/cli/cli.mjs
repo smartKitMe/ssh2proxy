@@ -56,7 +56,9 @@ async function getVersion() {
   }
 }
 
-// 深拷贝默认配置：原实现 `{ ...defaultConfig }` 是浅拷贝，CLI 覆盖会就地改写 defaultConfig 的嵌套对象
+// 复制默认配置：原实现 `{ ...defaultConfig }` 是浅拷贝，CLI 覆盖会就地改写 defaultConfig 的嵌套对象。
+// 边界（MUST 知悉）：`mergeConfig` 只对**普通对象**逐层复制，**数组按引用共享**
+// （`Array.isArray` 走 else 分支直接赋值），故 `prewarmTargets` 之类数组仍与原对象同源。
 function cloneDefaultConfig() {
   return mergeConfig({}, defaultConfig);
 }
@@ -102,8 +104,9 @@ function toCount(value, optionName) {
 }
 
 /**
- * 命令行选项 → 配置键的唯一映射实现点（D-104：杜绝「第二波幽灵选项」）
- * 完整「选项名 ↔ 配置键 ↔ 消费者」表见 handoff/known_issues.md
+ * 命令行选项 → 配置键的映射实现点（D-104：杜绝「第二波幽灵选项」）
+ * 「选项名 ↔ 配置键 ↔ 消费者」的权威来源是 `program.option(...)` 声明与本题函数体；
+ * 例外：`--ssh-private-key-path` 不是纯键映射，由 `main()` 读取文件内容后写入 `config.ssh.privateKey`。
  * @param {Object} config - 目标配置对象（就地更新）
  * @param {Object} options - commander 解析结果
  * @returns {Object} 更新后的配置
@@ -128,6 +131,10 @@ function applyCliOptions(config, options = {}) {
   if (options.host) {
     config.proxy.host = options.host;
   }
+  // 已知缺口（H7-S410）：`proxy.host` 被本函数写入、被 `ProxyServer` 的监听参数读取
+  // （`config.proxy.host ? [port, host] : [port]`，见 src/app.mjs），但 `src/config/default.config.mjs`
+  // 的 `proxy` 段与示例配置**都没有该键** —— 未显式传入时行为等同「未配置」（Node 默认绑定）。
+  // 补默认键属改行为，已登记为跨 chunk 申请（见 handoff/cross_chunk_request.md 的 CC-D4-2）。
 
   // SSH 隧道
   if (options.sshHost) {
@@ -189,8 +196,8 @@ function applyCliOptions(config, options = {}) {
 
 /**
  * 启动前配置校验（RD-12 接线点：validateConfig 的真实消费者）
- * 端口一类的非法值属致命错误 → fail-fast；SSH 凭证缺失按告警处理（默认配置即无凭证，
- * 且仅启动 PAC/管理端点属合法用法），理由见 handoff/known_issues.md
+ * 端口一类的非法值属致命错误 → fail-fast；SSH 凭证缺失按告警处理
+ * （默认配置本身带 host/username，但 password 与 privateKey 为空；且仅启动 PAC/管理端点属合法用法）
  * @param {Object} config - 待校验配置
  * @returns {string[]} 校验错误列表
  */

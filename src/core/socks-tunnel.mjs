@@ -534,7 +534,10 @@ export class Socks5ConnectionPool {
 
   /**
    * 动态调整：由使用情况驱动 maxConnections 变化（C2-03/A13）
-   * 入口名与调用方式见 handoff/known_issues.md
+   * 入口：池级 `Socks5ConnectionPool#adjustPoolSize()` 与隧道级 `Socks5Tunnel#adjustPoolSize()`（同源委托）；
+   * 驱动规则：`pending > 0 || inUse >= maxConnections` → +1（封顶 `maxConnectionsLimit`），
+   * `inUse === 0 && maxConnections > minConnections` → −1（下限 `minConnections`）；
+   * 自动触发点：空闲回收 tick（`reapIdleConnections` 内）。
    */
   adjustPoolSize() {
     const before = this.maxConnections;

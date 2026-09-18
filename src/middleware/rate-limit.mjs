@@ -18,7 +18,7 @@
  *   | max               | 100       | 每 IP 每窗口上限                                            |
  *   | message           | ...       | 超限响应体（保持原实现文案）                                 |
  *   | statusCode        | 429       | HTTP「Too Many Requests」                                   |
- *   | trustProxy        | false     | 默认不信任 x-forwarded-for（安全加固，见 known_issues.md）   |
+ *   | trustProxy        | false     | 默认不信任 x-forwarded-for（安全加固，只信显式 trustProxy=true） |
  *   | cleanupIntervalMs | windowMs  | 兜底清理周期；必须 unref（A9 / RD-09）                       |
  *   | keyGenerator      | 纯 IP     | 调用方可自定义粒度                                          |
  */
