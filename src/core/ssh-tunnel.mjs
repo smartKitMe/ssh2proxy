@@ -5,7 +5,7 @@ import { EventEmitter } from 'events';
 // 注意（已知缺口）：`retryBackoffFactor` / `retryMaxDelay` **未在 `src/config/default.config.mjs` 的 `ssh` 段定义**，
 // 也未出现在任何示例配置中（该缺口已在 `CLAUDE.md` 的「易漏键」表补记），只能靠这里的声明默认生效；
 // 同名键在 `upstreamSocks5.pool` 下有定义。
-// 补默认键属改行为，已登记为跨 chunk 申请（见 handoff/cross_chunk_request.md 的 CC-D4-1）。
+// 补默认键属改行为，已登记为跨 chunk 申请（见 `tasks/D4-docs/handoff/cross_chunk_request.md` 的 CC-D4-1）。
 const DEFAULT_RETRY = {
   retryAttempts: 3,
   retryDelay: 5000,
