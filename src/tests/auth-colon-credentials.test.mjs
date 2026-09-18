@@ -9,12 +9,21 @@
  *   且修复前的副本同样 407 ⇒ **属既有缺陷，非 D1 引入**。
  *
  * 修复：新增唯一口径的纯函数 `parseBasicCredentials()`（首个 `':'` 前为用户名，**其余全部**为口令），
- * 代理面 `validateAuth()` 与管理端点 `'/api/*'` **两处共同消费**；与 `src/middleware/auth.mjs#basicAuth`
- * 的 `indexOf(':')` + `slice` 逐字同义。
+ * 代理面 `validateAuth()` 与管理端点 `'/api/*'` **两处共同消费**。
+ * （D7-truth/T-4 订正：原文写「与 `auth.mjs#basicAuth` 的 `indexOf(':')` + `slice` **逐字同义**」——
+ *  该表述描述的是**两份内联副本**的 D5 时期形态；T-4 收敛后三者是**同一函数**，不再是"逐字同义的两份"。）
+ *
+ * D7-truth（T-2 + T-4，本文件第二轮）：该函数的**入参口径由「已解码明文」改为「base64 原文」**，
+ * 且实现体迁移到 `src/middleware/auth.mjs`（由 `src/app.mjs` 具名导入，避免循环依赖）⇒ 解码（`utf8`）
+ * + 切分收敛为**唯一实现**。原两处 `'ascii'` 解码会逐字节 `& 0x7F` 截为 7 位
+ * （实测 `'ü'` 的 UTF-8 `0xC3 0xBC` ⇒ 字符 `'C'`+`'<'`，即 `"üser:pä:ss"` ⇒ `"C<ser:pC$:ss"`）
+ * ⇒ 非 ASCII 凭据跨面漂移。本文件的纯函数用例已按新契约（`b64()` 构造 base64 原文）改写，
+ * **语义断言逐条不变**。
  *
  * 本文件是**可失败测试**：修复前「含冒号口令的正例」实测 407 ⇒ 变红，且断言消息携带实际状态行
  * 与实际口令长度（可看出是**凭据被截断**导致，而非其它错误）。pre-fix 变红日志见
- * `artifacts/negative-control/`。观测手段与 D1/C6 同源：裸 TCP 经真实代理端口，转发与否由**上游实收**独立取证。
+ * `tasks/D5-auth-colon/artifacts/negative-control/`（运行根下）。观测手段与 D1/C6 同源：裸 TCP 经真实代理端口，
+ * 转发与否由**上游实收**独立取证。
  */
 
 import { describe, it, before, after, beforeEach, afterEach } from 'mocha';
@@ -224,29 +233,48 @@ function adminGet(adminPort, path, authHeader, timeoutMs = 3000) {
 // Basic 头构造（明文 → base64），使用例意图一眼可读
 const basic = (user, pass) => `Basic ${Buffer.from(`${user}:${pass}`, 'ascii').toString('base64')}`;
 
+// D7-truth（T-2）：`parseBasicCredentials()` 的入参口径由「已解码明文」改为「base64 原文」
+// （解码 + 切分收敛为唯一实现，RFC 7617 §2.1 的 UTF-8）。此处按新契约构造入参，语义断言逐条不变。
+const b64 = (plain) => Buffer.from(plain, 'utf8').toString('base64');
+
 describe('D5-auth-colon · Basic 凭据解析口径统一（回归 + 兄弟面一致性）', () => {
   // ---------------------------------------------------------------- 纯函数层
-  describe('parseBasicCredentials() 纯函数口径（唯一真源）', () => {
+  describe('parseBasicCredentials() 纯函数口径（唯一真源：base64 原文 ⇒ utf8 解码 + 首个冒号切分）', () => {
     it('口令含单个冒号 ⇒ 用户名取首段，其余全部为口令', () => {
-      expect(parseBasicCredentials('u:p:q')).to.deep.equal({ username: 'u', password: 'p:q' });
+      expect(parseBasicCredentials(b64('u:p:q'))).to.deep.equal({ username: 'u', password: 'p:q' });
     });
 
     it('口令含多个冒号 ⇒ 全部归入口令（切分点只在首个冒号）', () => {
-      expect(parseBasicCredentials('u:p:q:r:s')).to.deep.equal({ username: 'u', password: 'p:q:r:s' });
+      expect(parseBasicCredentials(b64('u:p:q:r:s'))).to.deep.equal({ username: 'u', password: 'p:q:r:s' });
     });
 
     it('口令以冒号开头 / 结尾 ⇒ 冒号保留在口令内（不丢字符）', () => {
-      expect(parseBasicCredentials('u::q')).to.deep.equal({ username: 'u', password: ':q' });
-      expect(parseBasicCredentials('u:p:')).to.deep.equal({ username: 'u', password: 'p:' });
+      expect(parseBasicCredentials(b64('u::q'))).to.deep.equal({ username: 'u', password: ':q' });
+      expect(parseBasicCredentials(b64('u:p:'))).to.deep.equal({ username: 'u', password: 'p:' });
     });
 
     it('无冒号 ⇒ 返回 null（不可解析 ⇒ 调用方 fail-closed）', () => {
-      expect(parseBasicCredentials('no-colon')).to.equal(null);
-      expect(parseBasicCredentials('')).to.equal(null);
+      expect(parseBasicCredentials(b64('no-colon'))).to.equal(null);
+      expect(parseBasicCredentials(b64(''))).to.equal(null);
     });
 
     it('无冒号回归：不含冒号的普通凭据解析结果与旧实现（split 两段）一致', () => {
-      expect(parseBasicCredentials('u:p')).to.deep.equal({ username: 'u', password: 'p' });
+      expect(parseBasicCredentials(b64('u:p'))).to.deep.equal({ username: 'u', password: 'p' });
+    });
+
+    it('非字符串入参 ⇒ 返回 null（不抛异常，fail-closed）', () => {
+      expect(parseBasicCredentials(undefined)).to.equal(null);
+      expect(parseBasicCredentials(null)).to.equal(null);
+    });
+
+    it('D7-truth：非 ASCII 凭据完整保留（utf8 解码；旧 ascii 实现会截为 7 位）', () => {
+      // 实测截断形态（逐字节 `& 0x7F`，**一个字符变两个**）：
+      //   `'ü'` = UTF-8 `0xC3 0xBC` ⇒ `'C'(0x43)` + `'<'(0x3C)`
+      //   `'ä'` = UTF-8 `0xC3 0xA4` ⇒ `'C'(0x43)` + `'$'(0x24)`
+      //   故 `'üser:pä:ss'` 经 ascii ⇒ `'C<ser:pC$:ss'`（**不是** `'user:pa:ss'`，"截成 7 位" ≠ 去掉高位）
+      expect(Buffer.from('üser:pä:ss', 'utf8').toString('ascii')).to.equal('C<ser:pC$:ss');
+      expect(parseBasicCredentials(b64('üser:pä:ss'))).to.deep.equal({ username: 'üser', password: 'pä:ss' });
+      expect(parseBasicCredentials(b64('üser:pä:ss')).username).to.not.equal('C<ser');
     });
   });
 
@@ -514,6 +542,85 @@ describe('D5-auth-colon · Basic 凭据解析口径统一（回归 + 兄弟面�
         expect(bad, 'basicAuth 基准：错误口令应 401').to.equal(401);
       } finally {
         await new Promise((resolve) => server.close(resolve));
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------- 非 ASCII 三面（D7-truth T-2 行为修正）
+  describe('D7-truth · 非 ASCII 凭据：代理面 / 管理端点 / Express basicAuth 三面一致', () => {
+    const NON_ASCII_USER = 'üser';
+    const NON_ASCII_PASS = 'pä:ss';
+    // 非 ASCII + 含 ':' 双重压力：同时覆盖 T-2（编码）与 D5（首个冒号切分）
+    const nonAsciiBasic = (u, p) => `Basic ${Buffer.from(`${u}:${p}`, 'utf8').toString('base64')}`;
+
+    let echo;
+    before(async function () {
+      this.timeout(20000);
+      echo = await startEchoServer();
+    });
+    after(async function () {
+      this.timeout(10000);
+      if (echo && echo.server) await new Promise((resolve) => echo.server.close(resolve));
+    });
+
+    it('非 ASCII 凭据三面一致放行（旧 ascii 实现下代理面/管理端点会 407/401）', async function () {
+      this.timeout(30000);
+      const local = await startProxy({
+        auth: { enabled: true, username: NON_ASCII_USER, password: NON_ASCII_PASS },
+        admin: { enabled: true, username: NON_ASCII_USER, password: NON_ASCII_PASS }
+      });
+      try {
+        const authHeader = nonAsciiBasic(NON_ASCII_USER, NON_ASCII_PASS);
+
+        // 面 1：代理面（validateAuth）
+        const proxyResult = await rawProxyGet(
+          local.port,
+          `http://127.0.0.1:${echo.port}/nonascii-probe`,
+          `127.0.0.1:${echo.port}`,
+          authHeader
+        );
+        // 面 2：管理端点（/api/* 中间件）
+        const adminStatus = await adminGet(local.adminPort, '/api/status', authHeader);
+        // 面 3：Express basicAuth（middleware/auth.mjs 本体，作为口径基准面）
+        const expressMod = (await import('express')).default;
+        const AuthMW = (await import('../middleware/auth.mjs')).default;
+        const mw = new AuthMW({ auth: { enabled: true, username: NON_ASCII_USER, password: NON_ASCII_PASS } });
+        const app = expressMod();
+        app.use(mw.basicAuth.bind(mw));
+        app.get('/probe', (req, res) => res.status(200).send('OK'));
+        const srv = app.listen(0, '127.0.0.1');
+        await new Promise((resolve) => srv.once('listening', resolve));
+        let expressStatus;
+        try {
+          expressStatus = await adminGet(srv.address().port, '/probe', authHeader);
+        } finally {
+          await new Promise((resolve) => srv.close(resolve));
+        }
+
+        // 可失败条件：任一面的解码口径退回 'ascii' ⇒ 该面凭据被改写 ⇒ 拒绝
+        expect(proxyResult.statusLine, `代理面未放行非 ASCII 凭据：${proxyResult.statusLine}`).to.equal('HTTP/1.1 200 OK');
+        expect(adminStatus, '管理端点未放行非 ASCII 凭据').to.equal(200);
+        expect(expressStatus, 'Express basicAuth 未放行非 ASCII 凭据').to.equal(200);
+
+        // 三面一致（T-2 的验收口径：「三处一致」）
+        expect([adminStatus, expressStatus], '三面结论必须一致（都放行）').to.deep.equal([200, 200]);
+      } finally {
+        await stopProxy(local.server);
+      }
+    });
+
+    it('非 ASCII 负例：错误口令仍 401（行为修正未放宽拒绝路径）', async function () {
+      this.timeout(20000);
+      const local = await startProxy({
+        auth: { enabled: true, username: NON_ASCII_USER, password: NON_ASCII_PASS },
+        admin: { enabled: true, username: NON_ASCII_USER, password: NON_ASCII_PASS }
+      });
+      try {
+        const wrong = nonAsciiBasic(NON_ASCII_USER, 'wrong');
+        const adminStatus = await adminGet(local.adminPort, '/api/status', wrong);
+        expect(adminStatus, '错误口令必须 401（fail-closed 未被放宽）').to.equal(401);
+      } finally {
+        await stopProxy(local.server);
       }
     });
   });
