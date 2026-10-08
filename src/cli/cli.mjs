@@ -5,6 +5,7 @@ import fs from 'fs/promises';
 import { realpathSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { isMainThread } from 'worker_threads';
 import defaultConfig from '../config/default.config.mjs';
 import { mergeConfig, validateConfig } from '../utils/helpers.mjs';
 
@@ -316,6 +317,15 @@ async function main() {
  * 反例（已实测）：经 junction/别名路径调用 `node <别名>/dist/cli.js --version` 时，
  * `argv[1]` 是别名路径而 `import.meta.url` 是真实路径，字符串比较恒 false ⇒ main() 不执行 ⇒
  * 空输出 + exit 0（与 H2-S502 完全同形的"静默不启动"）。归一后两种调用都成立。
+ *
+ * worker 线程（本轮实测新增）：worker 的 `process.argv` 只有 `[execPath, workerFile]`，
+ * CLI 参数被丢弃（实测 `new Worker(new URL(import.meta.url))` → worker 侧 `argv=["node","<workerFile>"]`）。
+ * 而 `WorkerManager` 的 `workerPath` 默认是 `new URL(import.meta.url)`，在构建产物 `dist/cli.js`
+ * 形态下等于 CLI 自身 ⇒ worker 里 `argv[1] === import.meta.url`，**仅凭路径比较会判定"直接运行"**，
+ * 于是每个 worker 都再启动一整套默认配置的代理服务。实测症状：`Starting SSH2Proxy with options: {}`
+ * 反复出现、worker 抢占 `:::8080` / `:::1080`、对 `localhost:22` 反复 ECONNREFUSED。
+ * 故守卫 MUST 同时要求 `isMainThread`：worker 只做 `parentPort` 任务处理，不得启动服务。
+ * 回归断言见 `src/tests/cli-worker-entry.test.mjs`（正负双向）。
  */
 const isDirectRun = (() => {
   if (!process.argv[1]) {
@@ -330,7 +340,7 @@ const isDirectRun = (() => {
   }
 })();
 
-if (isDirectRun) {
+if (isDirectRun && isMainThread) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
