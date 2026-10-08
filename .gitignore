@@ -57,3 +57,8 @@ id_ed25519.pub
 
 # dsh-codepunk 工作房（S/M 规模工作房若落在工程根，不得进入 git 索引）
 rooms/
+
+# 验证报告产物：含真实服务器地址/用户名/本地路径等环境信息，仅本地保留（夹具与修复脚本仍入库）
+verify/pac-backup-report.md
+verify/pac-backup-report.json
+verify/pac-backup-verify.log
